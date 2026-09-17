@@ -77,7 +77,9 @@ FORMAT_SRCS  := $(SRCS) $(wildcard $(SRC_DIR)/*.hpp) $(TEST_SRCS) \
                 $(wildcard $(TEST_DIR)/*.hpp) \
                 $(filter-out $(GENERATED),$(wildcard $(LUAKIT_DIR)/luakit/*.hpp))
 
-.PHONY: all run clean format format-check api test
+CMAKE_BUILD_DIR := build-cmake
+
+.PHONY: all run clean format format-check api test compile-commands
 .SECONDARY: $(LUA_BC)
 
 all: $(TARGET)
@@ -124,6 +126,15 @@ $(BUILD_DIR)/test/%: $(TEST_DIR)/%.cpp $(wildcard $(TEST_DIR)/*.hpp) \
 
 clean:
 	$(RM) -r $(BUILD_DIR)
+
+# compile_commands.json for clangd. CMake is what produces it, so this just
+# configures (no build) and links it at the root, where editors that do not
+# read .clangd will still find it.
+compile-commands:
+	@command -v cmake >/dev/null || { echo "cmake not installed"; exit 1; }
+	cmake -S . -B $(CMAKE_BUILD_DIR) -DCMAKE_EXPORT_COMPILE_COMMANDS=ON >/dev/null
+	ln -sf $(CMAKE_BUILD_DIR)/compile_commands.json compile_commands.json
+	@echo "compile_commands.json -> $(CMAKE_BUILD_DIR)/compile_commands.json"
 
 # Regenerate the mechanical half of the lua:: layer from the Lua headers.
 # Only needed when the Lua version changes.

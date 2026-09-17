@@ -4,3 +4,6 @@ build/
 # CMake build trees
 build-*/
 cmake-build-*/
+
+# Symlink into the build tree, created by `make compile-commands`
+/compile_commands.json

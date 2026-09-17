@@ -10,6 +10,18 @@ project(
 # install the library. An app that merely embeds luakit gets no install rules.
 if(PROJECT_IS_TOP_LEVEL)
   set(LUAKIT_INSTALL ON)
+
+  # compile_commands.json, for clangd and friends. Only when we are the top
+  # project: forcing this on a parent build would be rude.
+  set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+  # Matches the Makefile's -std=c++17. Turning extensions off is also what
+  # makes CMake actually emit the flag: GCC already defaults to gnu++17, so
+  # without this the standard never reaches compile_commands.json and clangd
+  # falls back to whatever its own default happens to be.
+  set(CMAKE_CXX_STANDARD 17)
+  set(CMAKE_CXX_STANDARD_REQUIRED ON)
+  set(CMAKE_CXX_EXTENSIONS OFF)
 endif()
 
 # luakit is self-contained and brings its own install/export rules.

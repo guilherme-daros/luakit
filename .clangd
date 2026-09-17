@@ -1,0 +1,5 @@
+# The compilation database lives in the CMake build tree, because the plain
+# `build/` directory belongs to the Makefile. Generate it with either
+# `make compile-commands` or any CMake configure.
+CompileFlags:
+  CompilationDatabase: build-cmake
