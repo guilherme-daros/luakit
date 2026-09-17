@@ -7,7 +7,7 @@
 
 static_assert(LUA_VERSION_NUM == 504, "luakit targets Lua 5.4");
 
-namespace lua {
+namespace luakit::core {
 
 // ---- types ----
 using Alloc = ::lua_Alloc;
@@ -288,4 +288,4 @@ inline constexpr auto utf8 = &::luaopen_utf8;
 
 }  // namespace lib
 
-}  // namespace lua
+}  // namespace luakit::core

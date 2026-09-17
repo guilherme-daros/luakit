@@ -51,7 +51,7 @@ template <typename... Ts>
 struct is_tuple<std::tuple<Ts...>> : std::true_type {};
 
 template <typename... Ts>
-auto push_all(lua::State *L, const std::tuple<Ts...> &t) -> int {
+auto push_all(core::State *L, const std::tuple<Ts...> &t) -> int {
   int n = 0;
   std::apply([&](const auto &...xs) { ((n += Stack<std::decay_t<decltype(xs)>>::push(L, xs)), ...); }, t);
   return n;
@@ -60,7 +60,7 @@ auto push_all(lua::State *L, const std::tuple<Ts...> &t) -> int {
 // Pushes whatever the bound callable returned, and reports how many Lua values
 // that was.
 template <typename R, typename Invoke>
-auto invoke_and_push(lua::State *L, Invoke &&invoke) -> int {
+auto invoke_and_push(core::State *L, Invoke &&invoke) -> int {
   if constexpr (std::is_void_v<R>) {
     invoke();
     return 0;
@@ -72,7 +72,7 @@ auto invoke_and_push(lua::State *L, Invoke &&invoke) -> int {
 }
 
 template <auto F, typename R, typename... A, std::size_t... I>
-auto free_call(lua::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
+auto free_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
   // Phase 1: validate every argument. A fold expression is ordered, so the
   // lowest bad argument is the one reported, and no C++ object exists yet.
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 1), ...);
@@ -85,7 +85,7 @@ auto free_call(lua::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> 
 }
 
 template <auto F>
-auto free_impl(lua::State *L) -> int {
+auto free_impl(core::State *L) -> int {
   using sig = signature<decltype(F)>;
   using args = typename sig::args;
   return free_call<F, typename sig::ret>(L, static_cast<args *>(nullptr),
@@ -93,7 +93,7 @@ auto free_impl(lua::State *L) -> int {
 }
 
 template <auto M, typename R, typename C, typename... A, std::size_t... I>
-auto method_call(lua::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
+auto method_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
   Userdata<C>::check(L, 1);  // validates self, raises on a foreign or dead object
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 2), ...);
 
@@ -105,9 +105,9 @@ auto method_call(lua::State *L, std::tuple<A...> *, std::index_sequence<I...>) -
   if constexpr (std::is_lvalue_reference_v<R> && std::is_same_v<std::remove_cv_t<std::remove_reference_t<R>>, C>) {
     C *returned = &(self->*M)(std::get<I>(args)...);
     if (returned != self) {
-      lua::aux::error(L, "luakit: method returned a different object than self");
+      core::aux::error(L, "luakit: method returned a different object than self");
     }
-    lua::settop(L, 1);
+    core::settop(L, 1);
     return 1;
   } else {
     return invoke_and_push<R>(L, [&] { return (self->*M)(std::get<I>(args)...); });
@@ -115,7 +115,7 @@ auto method_call(lua::State *L, std::tuple<A...> *, std::index_sequence<I...>) -
 }
 
 template <typename T, typename... A, std::size_t... I>
-auto ctor_call(lua::State *L, std::index_sequence<I...>) -> int {
+auto ctor_call(core::State *L, std::index_sequence<I...>) -> int {
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 1), ...);
 
   // Storage is reserved before any argument is materialised, so the raising
@@ -131,12 +131,12 @@ auto ctor_call(lua::State *L, std::index_sequence<I...>) -> int {
 }
 
 template <typename T, typename... Args>
-auto ctor_impl(lua::State *L) -> int {
+auto ctor_impl(core::State *L) -> int {
   return ctor_call<T, Args...>(L, std::make_index_sequence<sizeof...(Args)>{});
 }
 
 template <auto M>
-auto method_impl(lua::State *L) -> int {
+auto method_impl(core::State *L) -> int {
   using sig = signature<decltype(M)>;
   using args = typename sig::args;
   return method_call<M, typename sig::ret, typename sig::cls>(L, static_cast<args *>(nullptr),
@@ -152,12 +152,12 @@ auto method_impl(lua::State *L) -> int {
 //
 // gets argument checking, conversion and return handling for free.
 template <auto F>
-inline constexpr lua::CFunction fn = &guard<&detail::free_impl<F>>;
+inline constexpr core::CFunction fn = &guard<&detail::free_impl<F>>;
 
 // Bind a member function. Argument 1 is the receiver; user arguments start at
 // index 2. A C& return value means "self", for chaining.
 template <auto M>
-inline constexpr lua::CFunction method = &guard<&detail::method_impl<M>>;
+inline constexpr core::CFunction method = &guard<&detail::method_impl<M>>;
 
 // Bind a constructor: {"new", luakit::ctor<Tracker, std::string>}.
 //
@@ -165,6 +165,6 @@ inline constexpr lua::CFunction method = &guard<&detail::method_impl<M>>;
 // inside guard<>, so a throwing constructor becomes a Lua error instead of
 // std::terminate.
 template <typename T, typename... Args>
-inline constexpr lua::CFunction ctor = &guard<&detail::ctor_impl<T, Args...>>;
+inline constexpr core::CFunction ctor = &guard<&detail::ctor_impl<T, Args...>>;
 
 }  // namespace luakit

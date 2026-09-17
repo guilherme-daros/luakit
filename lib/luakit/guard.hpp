@@ -13,8 +13,8 @@ static constexpr const char *k_guard_prefix = "[guard] ";
 // every function handed to Lua goes through this. aux::error is called outside
 // the catch block on purpose: raising from inside longjmps away with the
 // exception still live.
-template <lua::CFunction F>
-auto guard(lua::State *L) noexcept -> int {
+template <core::CFunction F>
+auto guard(core::State *L) noexcept -> int {
   char msg[256];
   bool failed = false;
 
@@ -28,7 +28,7 @@ auto guard(lua::State *L) noexcept -> int {
     failed = true;
   }
 
-  if (failed) return lua::aux::error(L, "%s%s", k_guard_prefix, msg);
+  if (failed) return core::aux::error(L, "%s%s", k_guard_prefix, msg);
   return 0;
 }
 

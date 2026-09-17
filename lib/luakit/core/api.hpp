@@ -1,8 +1,8 @@
 // Namespaced view of the Lua 5.4 C API.
 //
-//   lua::*       core API      (lua_*)
-//   lua::aux::*  auxiliary lib (luaL_*)
-//   lua::lib::*  standard libs (luaopen_*)
+//   luakit::core::*       core API      (lua_*)
+//   luakit::core::aux::*  auxiliary lib (luaL_*)
+//   luakit::core::lib::*  standard libs (luaopen_*)
 //
 // Functions, types and constants are mechanical aliases and live in the
 // generated api_gen.hpp. What follows are the parts that cannot be aliased:
@@ -19,7 +19,7 @@
 
 #include <cstddef>
 
-namespace lua {
+namespace luakit::core {
 
 // ---- stack ----
 inline auto pop(State *L, int n) -> void {
@@ -196,4 +196,4 @@ inline auto argexpected(State *L, bool cond, int arg, const char *tname) -> void
 
 }  // namespace aux
 
-}  // namespace lua
+}  // namespace luakit::core

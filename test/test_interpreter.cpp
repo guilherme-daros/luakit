@@ -8,6 +8,8 @@
 #include <string>
 #include <utility>
 
+namespace core = luakit::core;
+
 namespace {
 
 auto twice(int n) -> int {
@@ -32,19 +34,19 @@ struct luakit::Metatable<Widget> {
 
 namespace {
 
-const lua::aux::Reg widget_methods[] = {
+const core::aux::Reg widget_methods[] = {
     {"set",   luakit::method<&Widget::set>},
     {"get",   luakit::method<&Widget::get>},
     {nullptr, nullptr                     },
 };
-const lua::aux::Reg mod[] = {
+const core::aux::Reg mod[] = {
     {"new",   luakit::ctor<Widget>},
     {"twice", luakit::fn<twice>   },
     {nullptr, nullptr             },
 };
 
-auto open_mod(lua::State *L) -> int {
-  lua::aux::newlib(L, mod);
+auto open_mod(core::State *L) -> int {
+  core::aux::newlib(L, mod);
   return 1;
 }
 
@@ -54,9 +56,9 @@ auto test_lifecycle() -> void {
   CHECK(s.raw() != nullptr);
   s.open_libs();
   s.script("x = 1 + 1");
-  lua::getglobal(s.raw(), "x");
+  core::getglobal(s.raw(), "x");
   CHECK_EQ(s.get<int>(-1), 2);
-  lua::pop(s.raw(), 1);
+  core::pop(s.raw(), 1);
 }
 
 auto test_move() -> void {
@@ -64,15 +66,15 @@ auto test_move() -> void {
   luakit::Interpreter a;
   a.open_libs();
   a.script("y = 41");
-  lua::State *raw = a.raw();
+  core::State *raw = a.raw();
 
   luakit::Interpreter b(std::move(a));
   CHECK(a.raw() == nullptr);  // moved-from is emptied
   CHECK(b.raw() == raw);      // and owns the same interpreter
   b.script("y = y + 1");
-  lua::getglobal(b.raw(), "y");
+  core::getglobal(b.raw(), "y");
   CHECK_EQ(b.get<int>(-1), 42);
-  lua::pop(b.raw(), 1);
+  core::pop(b.raw(), 1);
 
   luakit::Interpreter c;
   c = std::move(b);  // must close c's original state, not leak it
@@ -104,7 +106,7 @@ auto test_errors_are_exceptions() -> void {
   CHECK(caught);
 
   // The state stays usable, and the failed chunk left nothing behind.
-  CHECK_EQ(lua::gettop(s.raw()), 0);
+  CHECK_EQ(core::gettop(s.raw()), 0);
   s.script("z = 3");
 }
 
@@ -132,9 +134,9 @@ auto test_script_bytecode() -> void {
   s.open_libs();
   const char *src = "bc = 'loaded'";
   s.script_bytecode(src, std::char_traits<char>::length(src), "@fake.lua");
-  lua::getglobal(s.raw(), "bc");
+  core::getglobal(s.raw(), "bc");
   CHECK_STR(s.get<std::string>(-1), "loaded");
-  lua::pop(s.raw(), 1);
+  core::pop(s.raw(), 1);
 }
 
 }  // namespace

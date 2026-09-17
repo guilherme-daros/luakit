@@ -49,15 +49,15 @@ struct Stack {
 template <typename T>
 struct Stack<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool>>> {
   static constexpr const char *name = "integer";
-  static auto test(lua::State *L, int idx) noexcept -> bool {
+  static auto test(core::State *L, int idx) noexcept -> bool {
     int ok = 0;
-    lua::tointegerx(L, idx, &ok);
+    core::tointegerx(L, idx, &ok);
     return ok != 0;
   }
-  static auto check(lua::State *L, int idx) -> void { lua::aux::checkinteger(L, idx); }
-  static auto get(lua::State *L, int idx) noexcept -> T { return static_cast<T>(lua::tointeger(L, idx)); }
-  static auto push(lua::State *L, T v) -> int {
-    lua::pushinteger(L, static_cast<lua::Integer>(v));
+  static auto check(core::State *L, int idx) -> void { core::aux::checkinteger(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> T { return static_cast<T>(core::tointeger(L, idx)); }
+  static auto push(core::State *L, T v) -> int {
+    core::pushinteger(L, static_cast<core::Integer>(v));
     return 1;
   }
 };
@@ -65,15 +65,15 @@ struct Stack<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, boo
 template <typename T>
 struct Stack<T, std::enable_if_t<std::is_floating_point_v<T>>> {
   static constexpr const char *name = "number";
-  static auto test(lua::State *L, int idx) noexcept -> bool {
+  static auto test(core::State *L, int idx) noexcept -> bool {
     int ok = 0;
-    lua::tonumberx(L, idx, &ok);
+    core::tonumberx(L, idx, &ok);
     return ok != 0;
   }
-  static auto check(lua::State *L, int idx) -> void { lua::aux::checknumber(L, idx); }
-  static auto get(lua::State *L, int idx) noexcept -> T { return static_cast<T>(lua::tonumber(L, idx)); }
-  static auto push(lua::State *L, T v) -> int {
-    lua::pushnumber(L, static_cast<lua::Number>(v));
+  static auto check(core::State *L, int idx) -> void { core::aux::checknumber(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> T { return static_cast<T>(core::tonumber(L, idx)); }
+  static auto push(core::State *L, T v) -> int {
+    core::pushnumber(L, static_cast<core::Number>(v));
     return 1;
   }
 };
@@ -83,11 +83,11 @@ struct Stack<T, std::enable_if_t<std::is_floating_point_v<T>>> {
 template <>
 struct Stack<bool> {
   static constexpr const char *name = "boolean";
-  static auto test(lua::State *L, int idx) noexcept -> bool { return lua::type(L, idx) == lua::TBOOLEAN; }
-  static auto check(lua::State *L, int idx) -> void { lua::aux::checktype(L, idx, lua::TBOOLEAN); }
-  static auto get(lua::State *L, int idx) noexcept -> bool { return lua::toboolean(L, idx) != 0; }
-  static auto push(lua::State *L, bool v) -> int {
-    lua::pushboolean(L, v);
+  static auto test(core::State *L, int idx) noexcept -> bool { return core::type(L, idx) == core::TBOOLEAN; }
+  static auto check(core::State *L, int idx) -> void { core::aux::checktype(L, idx, core::TBOOLEAN); }
+  static auto get(core::State *L, int idx) noexcept -> bool { return core::toboolean(L, idx) != 0; }
+  static auto push(core::State *L, bool v) -> int {
+    core::pushboolean(L, v);
     return 1;
   }
 };
@@ -97,11 +97,11 @@ struct Stack<bool> {
 template <>
 struct Stack<const char *> {
   static constexpr const char *name = "string";
-  static auto test(lua::State *L, int idx) noexcept -> bool { return lua::isstring(L, idx) != 0; }
-  static auto check(lua::State *L, int idx) -> void { lua::aux::checkstring(L, idx); }
-  static auto get(lua::State *L, int idx) noexcept -> const char * { return lua::tolstring(L, idx, nullptr); }
-  static auto push(lua::State *L, const char *v) -> int {
-    lua::pushstring(L, v);
+  static auto test(core::State *L, int idx) noexcept -> bool { return core::isstring(L, idx) != 0; }
+  static auto check(core::State *L, int idx) -> void { core::aux::checkstring(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> const char * { return core::tolstring(L, idx, nullptr); }
+  static auto push(core::State *L, const char *v) -> int {
+    core::pushstring(L, v);
     return 1;
   }
 };
@@ -112,15 +112,15 @@ struct Stack<const char *> {
 template <>
 struct Stack<std::string> {
   static constexpr const char *name = "string";
-  static auto test(lua::State *L, int idx) noexcept -> bool { return lua::isstring(L, idx) != 0; }
-  static auto check(lua::State *L, int idx) -> void { lua::aux::checkstring(L, idx); }
-  static auto get(lua::State *L, int idx) -> std::string {
+  static auto test(core::State *L, int idx) noexcept -> bool { return core::isstring(L, idx) != 0; }
+  static auto check(core::State *L, int idx) -> void { core::aux::checkstring(L, idx); }
+  static auto get(core::State *L, int idx) -> std::string {
     std::size_t n = 0;
-    const char *s = lua::tolstring(L, idx, &n);
+    const char *s = core::tolstring(L, idx, &n);
     return std::string(s, n);  // copies, so embedded NULs survive
   }
-  static auto push(lua::State *L, const std::string &v) -> int {
-    lua::pushlstring(L, v.data(), v.size());
+  static auto push(core::State *L, const std::string &v) -> int {
+    core::pushlstring(L, v.data(), v.size());
     return 1;
   }
 };
@@ -129,15 +129,15 @@ struct Stack<std::string> {
 template <>
 struct Stack<std::string_view> {
   static constexpr const char *name = "string";
-  static auto test(lua::State *L, int idx) noexcept -> bool { return lua::isstring(L, idx) != 0; }
-  static auto check(lua::State *L, int idx) -> void { lua::aux::checkstring(L, idx); }
-  static auto get(lua::State *L, int idx) noexcept -> std::string_view {
+  static auto test(core::State *L, int idx) noexcept -> bool { return core::isstring(L, idx) != 0; }
+  static auto check(core::State *L, int idx) -> void { core::aux::checkstring(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> std::string_view {
     std::size_t n = 0;
-    const char *s = lua::tolstring(L, idx, &n);
+    const char *s = core::tolstring(L, idx, &n);
     return std::string_view(s, n);
   }
-  static auto push(lua::State *L, std::string_view v) -> int {
-    lua::pushlstring(L, v.data(), v.size());
+  static auto push(core::State *L, std::string_view v) -> int {
+    core::pushlstring(L, v.data(), v.size());
     return 1;
   }
 };
@@ -147,85 +147,85 @@ struct Stack<std::string_view> {
 template <typename T>
 struct Stack<std::optional<T>> {
   static constexpr const char *name = Stack<T>::name;
-  static auto test(lua::State *L, int idx) noexcept -> bool {
-    return lua::isnoneornil(L, idx) || Stack<T>::test(L, idx);
+  static auto test(core::State *L, int idx) noexcept -> bool {
+    return core::isnoneornil(L, idx) || Stack<T>::test(L, idx);
   }
-  static auto check(lua::State *L, int idx) -> void {
-    if (!lua::isnoneornil(L, idx)) Stack<T>::check(L, idx);
+  static auto check(core::State *L, int idx) -> void {
+    if (!core::isnoneornil(L, idx)) Stack<T>::check(L, idx);
   }
-  static auto get(lua::State *L, int idx) -> std::optional<T> {
-    if (lua::isnoneornil(L, idx)) return std::nullopt;
+  static auto get(core::State *L, int idx) -> std::optional<T> {
+    if (core::isnoneornil(L, idx)) return std::nullopt;
     return Stack<T>::get(L, idx);
   }
-  static auto push(lua::State *L, const std::optional<T> &v) -> int {
+  static auto push(core::State *L, const std::optional<T> &v) -> int {
     if (!v) {
-      lua::pushnil(L);
+      core::pushnil(L);
       return 1;
     }
     return Stack<T>::push(L, *v);
   }
 };
 
-// A Lua sequence table. Length and element access are raw: lua::rawlen and
-// lua::rawgeti cannot raise, which get() requires.
+// A Lua sequence table. Length and element access are raw: core::rawlen and
+// core::rawgeti cannot raise, which get() requires.
 template <typename T>
 struct Stack<std::vector<T>> {
   static constexpr const char *name = "table";
 
-  static auto test(lua::State *L, int idx) noexcept -> bool {
-    if (lua::type(L, idx) != lua::TTABLE) return false;
-    const int at = lua::absindex(L, idx);
-    if (!lua::checkstack(L, 2)) return false;
-    const auto n = static_cast<lua::Integer>(lua::rawlen(L, at));
-    for (lua::Integer i = 1; i <= n; ++i) {
-      lua::rawgeti(L, at, i);
+  static auto test(core::State *L, int idx) noexcept -> bool {
+    if (core::type(L, idx) != core::TTABLE) return false;
+    const int at = core::absindex(L, idx);
+    if (!core::checkstack(L, 2)) return false;
+    const auto n = static_cast<core::Integer>(core::rawlen(L, at));
+    for (core::Integer i = 1; i <= n; ++i) {
+      core::rawgeti(L, at, i);
       const bool ok = Stack<T>::test(L, -1);
-      lua::pop(L, 1);
+      core::pop(L, 1);
       if (!ok) return false;
     }
     return true;
   }
 
-  static auto check(lua::State *L, int idx) -> void {
-    const int at = lua::absindex(L, idx);
-    lua::aux::checktype(L, at, lua::TTABLE);
-    lua::aux::checkstack(L, 2, "luakit: vector element");
+  static auto check(core::State *L, int idx) -> void {
+    const int at = core::absindex(L, idx);
+    core::aux::checktype(L, at, core::TTABLE);
+    core::aux::checkstack(L, 2, "luakit: vector element");
 
-    const auto n = static_cast<lua::Integer>(lua::rawlen(L, at));
-    for (lua::Integer i = 1; i <= n; ++i) {
-      lua::rawgeti(L, at, i);
+    const auto n = static_cast<core::Integer>(core::rawlen(L, at));
+    for (core::Integer i = 1; i <= n; ++i) {
+      core::rawgeti(L, at, i);
       const bool ok = Stack<T>::test(L, -1);
-      lua::pop(L, 1);  // pop before raising, so the stack stays balanced
+      core::pop(L, 1);  // pop before raising, so the stack stays balanced
       if (!ok) {
-        lua::aux::argerror(L, at, lua::pushfstring(L, "element %d is not a %s", static_cast<int>(i), Stack<T>::name));
+        core::aux::argerror(L, at, core::pushfstring(L, "element %d is not a %s", static_cast<int>(i), Stack<T>::name));
       }
     }
   }
 
-  static auto get(lua::State *L, int idx) -> std::vector<T> {
-    const int at = lua::absindex(L, idx);
-    const auto n = static_cast<lua::Integer>(lua::rawlen(L, at));
+  static auto get(core::State *L, int idx) -> std::vector<T> {
+    const int at = core::absindex(L, idx);
+    const auto n = static_cast<core::Integer>(core::rawlen(L, at));
 
-    // lua::checkstack reports failure by returning 0 rather than raising, so
+    // core::checkstack reports failure by returning 0 rather than raising, so
     // the vector below can never be skipped over by a longjmp.
-    if (!lua::checkstack(L, 2)) throw std::runtime_error("luakit: cannot grow Lua stack");
+    if (!core::checkstack(L, 2)) throw std::runtime_error("luakit: cannot grow Lua stack");
 
     std::vector<T> out;
     out.reserve(static_cast<std::size_t>(n));
-    for (lua::Integer i = 1; i <= n; ++i) {
-      lua::rawgeti(L, at, i);
+    for (core::Integer i = 1; i <= n; ++i) {
+      core::rawgeti(L, at, i);
       out.push_back(Stack<T>::get(L, -1));  // may throw, unwinds normally
-      lua::pop(L, 1);
+      core::pop(L, 1);
     }
     return out;
   }
 
-  static auto push(lua::State *L, const std::vector<T> &v) -> int {
-    lua::createtable(L, static_cast<int>(v.size()), 0);
-    const int t = lua::gettop(L);
+  static auto push(core::State *L, const std::vector<T> &v) -> int {
+    core::createtable(L, static_cast<int>(v.size()), 0);
+    const int t = core::gettop(L);
     for (std::size_t i = 0; i < v.size(); ++i) {
       Stack<T>::push(L, v[i]);
-      lua::rawseti(L, t, static_cast<lua::Integer>(i + 1));
+      core::rawseti(L, t, static_cast<core::Integer>(i + 1));
     }
     return 1;
   }
@@ -237,32 +237,32 @@ struct Stack<std::vector<T>> {
 template <typename T>
 struct Stack<T *, std::enable_if_t<detail::has_metatable_v<T>>> {
   static constexpr const char *name = Metatable<T>::k_name;
-  static auto test(lua::State *L, int idx) noexcept -> bool {
-    return lua::aux::testudata(L, idx, Metatable<T>::k_name) != nullptr;
+  static auto test(core::State *L, int idx) noexcept -> bool {
+    return core::aux::testudata(L, idx, Metatable<T>::k_name) != nullptr;
   }
-  static auto check(lua::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
-  static auto get(lua::State *L, int idx) noexcept -> T * {
-    return static_cast<Box<T> *>(lua::touserdata(L, idx))->obj();
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> T * {
+    return static_cast<Box<T> *>(core::touserdata(L, idx))->obj();
   }
 };
 
 template <typename T>
 struct Stack<T &, std::enable_if_t<detail::has_metatable_v<T>>> {
   static constexpr const char *name = Metatable<T>::k_name;
-  static auto test(lua::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
-  static auto check(lua::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
-  static auto get(lua::State *L, int idx) noexcept -> T & { return *Stack<T *>::get(L, idx); }
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> T & { return *Stack<T *>::get(L, idx); }
 };
 
 // Convenience wrappers for hand-written code.
 template <typename T>
-auto get(lua::State *L, int idx) -> T {
+auto get(core::State *L, int idx) -> T {
   Stack<T>::check(L, idx);
   return Stack<T>::get(L, idx);
 }
 
 template <typename T>
-auto push(lua::State *L, T &&v) -> int {
+auto push(core::State *L, T &&v) -> int {
   return Stack<std::decay_t<T>>::push(L, std::forward<T>(v));
 }
 

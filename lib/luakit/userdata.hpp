@@ -10,7 +10,7 @@ namespace luakit {
 template <typename T>
 struct Metatable;
 
-// lua::newuserdatauv returns storage the collector already tracks, before the
+// core::newuserdatauv returns storage the collector already tracks, before the
 // constructor has run. `live` lets __gc tell a built object from raw memory,
 // and makes double finalization a no-op.
 template <typename T>
@@ -29,22 +29,22 @@ struct Userdata {
   // constructed. The caller must placement-new into box->storage and only then
   // set box->live. Splitting this out lets a caller allocate *before* it
   // materialises any C++ argument, so nothing can be longjmp'd over.
-  static auto reserve(lua::State *L) -> box_type * {
-    void *p = lua::newuserdatauv(L, sizeof(box_type), 0);
+  static auto reserve(core::State *L) -> box_type * {
+    void *p = core::newuserdatauv(L, sizeof(box_type), 0);
     auto *b = static_cast<box_type *>(p);
     b->live = false;
-    lua::aux::setmetatable(L, Metatable<T>::k_name);
+    core::aux::setmetatable(L, Metatable<T>::k_name);
     return b;
   }
 
   // Takes a callable rather than constructor arguments: arguments are
   // evaluated at the call site, which would leave a C++ temporary alive across
-  // lua::newuserdatauv, and that longjmps on OOM.
+  // core::newuserdatauv, and that longjmps on OOM.
   //
-  // This can throw, so a hand-written lua::CFunction calling it must be
+  // This can throw, so a hand-written core::CFunction calling it must be
   // wrapped in guard<>. Prefer luakit::ctor<T, Args...>, which is already.
   template <typename F>
-  static auto emplace(lua::State *L, F &&make) -> T * {
+  static auto emplace(core::State *L, F &&make) -> T * {
     box_type *b = reserve(L);
     new (b->storage) T(make());
     b->live = true;
@@ -52,15 +52,15 @@ struct Userdata {
   }
 
   // The T at stack index idx, or a Lua error if it is not one.
-  static auto check(lua::State *L, int idx) -> T * {
-    auto *b = static_cast<box_type *>(lua::aux::checkudata(L, idx, Metatable<T>::k_name));
-    if (!b->live) lua::aux::error(L, "%s used after finalization", Metatable<T>::k_name);
+  static auto check(core::State *L, int idx) -> T * {
+    auto *b = static_cast<box_type *>(core::aux::checkudata(L, idx, Metatable<T>::k_name));
+    if (!b->live) core::aux::error(L, "%s used after finalization", Metatable<T>::k_name);
     return b->obj();
   }
 
   // A finalizer must never raise.
-  static auto gc(lua::State *L) noexcept -> int {
-    auto *b = static_cast<box_type *>(lua::aux::checkudata(L, 1, Metatable<T>::k_name));
+  static auto gc(core::State *L) noexcept -> int {
+    auto *b = static_cast<box_type *>(core::aux::checkudata(L, 1, Metatable<T>::k_name));
     if (b->live) {
       b->live = false;
       b->obj()->~T();
@@ -68,16 +68,17 @@ struct Userdata {
     return 0;
   }
 
-  static auto register_class(lua::State *L, const lua::aux::Reg *methods, const lua::aux::Reg *meta = nullptr) -> void {
-    lua::aux::newmetatable(L, Metatable<T>::k_name);
-    lua::pushcfunction(L, gc);
-    lua::setfield(L, -2, "__gc");
-    if (meta) lua::aux::setfuncs(L, meta, 0);
+  static auto register_class(core::State *L, const core::aux::Reg *methods, const core::aux::Reg *meta = nullptr)
+      -> void {
+    core::aux::newmetatable(L, Metatable<T>::k_name);
+    core::pushcfunction(L, gc);
+    core::setfield(L, -2, "__gc");
+    if (meta) core::aux::setfuncs(L, meta, 0);
 
-    lua::aux::newlib(L, methods);
-    lua::setfield(L, -2, "__index");
+    core::aux::newlib(L, methods);
+    core::setfield(L, -2, "__index");
 
-    lua::pop(L, 1);
+    core::pop(L, 1);
   }
 };
 

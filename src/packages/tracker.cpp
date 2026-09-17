@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+namespace core = luakit::core;
+
 namespace tracker {
 
 class Tracker {
@@ -61,7 +63,7 @@ struct luakit::Metatable<tracker::Tracker> {
 
 namespace tracker {
 
-const lua::aux::Reg methods[] = {
+const core::aux::Reg methods[] = {
     {"add",   luakit::method<&Tracker::add> },
     {"mean",  luakit::method<&Tracker::mean>},
     {"max",   luakit::method<&Tracker::max> },
@@ -69,22 +71,22 @@ const lua::aux::Reg methods[] = {
     {nullptr, nullptr                       },
 };
 
-const lua::aux::Reg meta[] = {
+const core::aux::Reg meta[] = {
     {"__len",      luakit::method<&Tracker::count>   },
     {"__tostring", luakit::method<&Tracker::describe>},
     {nullptr,      nullptr                           },
 };
 
-const lua::aux::Reg funcs[] = {
+const core::aux::Reg funcs[] = {
     {"new", luakit::ctor<Tracker, std::string>},
     {nullptr, nullptr},
 };
 
 }  // namespace tracker
 
-extern "C" auto luaopen_tracker(lua::State *L) -> int {
+extern "C" auto luaopen_tracker(core::State *L) -> int {
   luakit::Userdata<tracker::Tracker>::register_class(L, tracker::methods, tracker::meta);
 
-  lua::aux::newlib(L, tracker::funcs);
+  core::aux::newlib(L, tracker::funcs);
   return 1;
 }

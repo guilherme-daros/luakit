@@ -57,6 +57,8 @@ struct luakit::Metatable<tf::Thrower> {
 
 namespace tf {
 
+namespace core = luakit::core;
+
 // ---------------------------------------------------------- bound functions
 
 inline auto add(double a, double b) -> double {
@@ -93,7 +95,7 @@ inline auto boom_unknown() -> void {
   throw 42;
 }
 
-const lua::aux::Reg funcs[] = {
+const core::aux::Reg funcs[] = {
     {"add", luakit::fn<add>},
     {"join", luakit::fn<join>},
     {"scale", luakit::fn<scale>},
@@ -109,7 +111,7 @@ const lua::aux::Reg funcs[] = {
     {nullptr, nullptr},
 };
 
-const lua::aux::Reg counter_methods[] = {
+const core::aux::Reg counter_methods[] = {
     {"bump",  luakit::method<&Counter::bump> },
     {"value", luakit::method<&Counter::value>},
     {"label", luakit::method<&Counter::label>},
@@ -117,40 +119,40 @@ const lua::aux::Reg counter_methods[] = {
     {nullptr, nullptr                        },
 };
 
-const lua::aux::Reg thrower_methods[] = {
+const core::aux::Reg thrower_methods[] = {
     {nullptr, nullptr}
 };
 
 // ------------------------------------------------------------------ helpers
 
 struct Fixture {
-  lua::State *L;
-  Fixture() : L(lua::aux::newstate()) {
-    lua::aux::openlibs(L);
+  core::State *L;
+  Fixture() : L(core::aux::newstate()) {
+    core::aux::openlibs(L);
     luakit::Userdata<Counter>::register_class(L, counter_methods);
     luakit::Userdata<Thrower>::register_class(L, thrower_methods);
-    lua::aux::newlib(L, funcs);
-    lua::setglobal(L, "m");
+    core::aux::newlib(L, funcs);
+    core::setglobal(L, "m");
   }
-  ~Fixture() { lua::close(L); }
+  ~Fixture() { core::close(L); }
 };
 
 // Runs a chunk, returns the error message (empty when it succeeded).
-inline auto run(lua::State *L, const char *src) -> std::string {
-  if (lua::aux::dostring(L, src) == lua::OK) return {};
-  std::string msg = lua::tostring(L, -1) ? lua::tostring(L, -1) : "?";
-  lua::pop(L, 1);
+inline auto run(core::State *L, const char *src) -> std::string {
+  if (core::aux::dostring(L, src) == core::OK) return {};
+  std::string msg = core::tostring(L, -1) ? core::tostring(L, -1) : "?";
+  core::pop(L, 1);
   return msg;
 }
 
 // Evaluates an expression and returns it as a string, for easy comparison.
-inline auto eval(lua::State *L, const char *expr) -> std::string {
+inline auto eval(core::State *L, const char *expr) -> std::string {
   const std::string chunk = std::string("__r = tostring(") + expr + ")";
   const std::string err = run(L, chunk.c_str());
   if (!err.empty()) return "<error> " + err;
-  lua::getglobal(L, "__r");
-  std::string out = lua::tostring(L, -1);
-  lua::pop(L, 1);
+  core::getglobal(L, "__r");
+  std::string out = core::tostring(L, -1);
+  core::pop(L, 1);
   return out;
 }
 

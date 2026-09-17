@@ -139,7 +139,7 @@ def main() -> int:
         "",
         "static_assert(LUA_VERSION_NUM == 504, \"luakit targets Lua 5.4\");",
         "",
-        "namespace lua {",
+        "namespace luakit::core {",
         "",
     ]
 
@@ -180,7 +180,7 @@ def main() -> int:
     out += ["namespace lib {", "", "// ---- standard library openers (luaopen_*) ----"]
     for p, n in sorted(set(f for f in core_f + aux_f + lib_f if f[0] == "luaopen")):
         out.append(f"inline constexpr auto {safe(n)} = &::luaopen_{n};")
-    out += ["", "}  // namespace lib", "", "}  // namespace lua", ""]
+    out += ["", "}  // namespace lib", "", "}  // namespace luakit::core", ""]
 
     dest = pathlib.Path(args.out)
     dest.parent.mkdir(parents=True, exist_ok=True)
