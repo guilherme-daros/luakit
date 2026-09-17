@@ -11,11 +11,13 @@ auto main(int argc, char **argv) -> int try {
   (void)argc;
   (void)argv;
 
-  luakit::State state;
+  auto state = luakit::State();
 
   // preload must follow open_libs, which is what creates `package`. Nothing
   // is loaded until init.lua requires it.
-  state.open_libs().preload("luna", luaopen_luna).preload("tracker", luaopen_tracker);
+  state.open_libs();
+  state.preload("luna", luaopen_luna);
+  state.preload("tracker", luaopen_tracker);
 
   state.script_bytecode(init_lua, init_lua_len, "@lua/init.lua");
 

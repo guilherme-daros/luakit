@@ -1,9 +1,12 @@
-# Makefile build output
-build/
 
 # CMake build trees
+build/
 build-*/
 cmake-build-*/
 
-# Symlink into the build tree, created by `make compile-commands`
+# Debris from an accidental in-source configure
+/CMakeCache.txt
+/CMakeFiles/
+
+# Symlink into the build tree, created at CMake configure time
 /compile_commands.json

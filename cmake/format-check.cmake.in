@@ -1,0 +1,28 @@
+# Generated from format-check.cmake.in -- do not edit.
+#
+# Runs both formatters even when the first fails, so one invocation reports
+# every offender instead of making you fix C++ and rediscover Lua.
+
+set(CLANG_FORMAT "@CLANG_FORMAT_EXECUTABLE@")
+set(STYLUA "@STYLUA_EXECUTABLE@")
+set(CXX_FILES "@LUNA_FORMAT_CXX@")
+set(LUA_FILES "@LUNA_FORMAT_LUA@")
+
+set(failed FALSE)
+
+execute_process(COMMAND "${CLANG_FORMAT}" --dry-run --Werror ${CXX_FILES}
+                RESULT_VARIABLE cxx_result)
+if(NOT cxx_result EQUAL 0)
+  set(failed TRUE)
+endif()
+
+execute_process(COMMAND "${STYLUA}" --check ${LUA_FILES} RESULT_VARIABLE lua_result)
+if(NOT lua_result EQUAL 0)
+  set(failed TRUE)
+endif()
+
+if(failed)
+  message(FATAL_ERROR "formatting check failed; run the `format` target")
+endif()
+
+message(STATUS "formatting is clean")
