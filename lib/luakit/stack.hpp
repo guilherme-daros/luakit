@@ -1,7 +1,7 @@
 #pragma once
 
-#include "luakit/api.hpp"
-#include "luakit/binding.hpp"
+#include "luakit/core/api.hpp"
+#include "luakit/userdata.hpp"
 
 #include <cstddef>
 #include <optional>
@@ -232,7 +232,7 @@ struct Stack<std::vector<T>> {
 };
 
 // Registered classes, by pointer or reference. Creation goes through
-// Binding<T>::emplace, so there is no push here: pushing a bare T* would have
+// Userdata<T>::emplace, so there is no push here: pushing a bare T* would have
 // no way to know whether Lua already owns that object.
 template <typename T>
 struct Stack<T *, std::enable_if_t<detail::has_metatable_v<T>>> {
@@ -240,7 +240,7 @@ struct Stack<T *, std::enable_if_t<detail::has_metatable_v<T>>> {
   static auto test(lua::State *L, int idx) noexcept -> bool {
     return lua::aux::testudata(L, idx, Metatable<T>::k_name) != nullptr;
   }
-  static auto check(lua::State *L, int idx) -> void { Binding<T>::arg(L, idx); }
+  static auto check(lua::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
   static auto get(lua::State *L, int idx) noexcept -> T * {
     return static_cast<Box<T> *>(lua::touserdata(L, idx))->obj();
   }
@@ -250,7 +250,7 @@ template <typename T>
 struct Stack<T &, std::enable_if_t<detail::has_metatable_v<T>>> {
   static constexpr const char *name = Metatable<T>::k_name;
   static auto test(lua::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
-  static auto check(lua::State *L, int idx) -> void { Binding<T>::arg(L, idx); }
+  static auto check(lua::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
   static auto get(lua::State *L, int idx) noexcept -> T & { return *Stack<T *>::get(L, idx); }
 };
 

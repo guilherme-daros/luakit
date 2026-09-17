@@ -83,7 +83,7 @@ const lua::aux::Reg funcs[] = {
 }  // namespace tracker
 
 extern "C" auto luaopen_tracker(lua::State *L) -> int {
-  luakit::Binding<tracker::Tracker>::register_class(L, tracker::methods, tracker::meta);
+  luakit::Userdata<tracker::Tracker>::register_class(L, tracker::methods, tracker::meta);
 
   lua::aux::newlib(L, tracker::funcs);
   return 1;

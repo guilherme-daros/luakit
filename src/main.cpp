@@ -1,25 +1,25 @@
 #include <cstdio>
 #include <stdexcept>
 
-#include "luakit/state.hpp"
+#include "luakit/interpreter.hpp"
 
 #include "init_lua.h"
-#include "luna.hpp"
-#include "tracker.hpp"
+#include "packages/luna.hpp"
+#include "packages/tracker.hpp"
 
 auto main(int argc, char **argv) -> int try {
   (void)argc;
   (void)argv;
 
-  auto state = luakit::State();
+  auto interpreter = luakit::Interpreter();
 
   // preload must follow open_libs, which is what creates `package`. Nothing
   // is loaded until init.lua requires it.
-  state.open_libs();
-  state.preload("luna", luaopen_luna);
-  state.preload("tracker", luaopen_tracker);
+  interpreter.open_libs();
+  interpreter.preload("luna", luaopen_luna);
+  interpreter.preload("tracker", luaopen_tracker);
 
-  state.script_bytecode(init_lua, init_lua_len, "@lua/init.lua");
+  interpreter.script_file("lua/init.lua");
 
   return 0;
 

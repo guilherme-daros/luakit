@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate lib/luakit/api_gen.hpp from the Lua 5.4 public headers.
+"""Generate lib/luakit/core/api_gen.hpp from the Lua 5.4 public headers.
 
 Only the mechanical parts are generated: exported functions, typedefs and
 constants. Function-like macros cannot be aliased and are hand-written in
@@ -119,7 +119,7 @@ def filter_constants(consts: list[str], inc: str) -> list[tuple[str, str]]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--lua-include", default="/usr/include/lua5.4")
-    ap.add_argument("-o", "--out", default="lib/luakit/api_gen.hpp")
+    ap.add_argument("-o", "--out", default="lib/luakit/core/api_gen.hpp")
     args = ap.parse_args()
 
     inc = pathlib.Path(args.lua_include)

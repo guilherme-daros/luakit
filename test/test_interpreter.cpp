@@ -1,9 +1,9 @@
-// Tests for the owning State facade.
+// Tests for the owning Interpreter facade.
 
 #include "check.hpp"
 
 #include "luakit/function.hpp"
-#include "luakit/state.hpp"
+#include "luakit/interpreter.hpp"
 
 #include <string>
 #include <utility>
@@ -49,8 +49,8 @@ auto open_mod(lua::State *L) -> int {
 }
 
 auto test_lifecycle() -> void {
-  t::section("State lifecycle");
-  luakit::State s;
+  t::section("Interpreter lifecycle");
+  luakit::Interpreter s;
   CHECK(s.raw() != nullptr);
   s.open_libs();
   s.script("x = 1 + 1");
@@ -60,13 +60,13 @@ auto test_lifecycle() -> void {
 }
 
 auto test_move() -> void {
-  t::section("State is movable, not copyable");
-  luakit::State a;
+  t::section("Interpreter is movable, not copyable");
+  luakit::Interpreter a;
   a.open_libs();
   a.script("y = 41");
   lua::State *raw = a.raw();
 
-  luakit::State b(std::move(a));
+  luakit::Interpreter b(std::move(a));
   CHECK(a.raw() == nullptr);  // moved-from is emptied
   CHECK(b.raw() == raw);      // and owns the same interpreter
   b.script("y = y + 1");
@@ -74,7 +74,7 @@ auto test_move() -> void {
   CHECK_EQ(b.get<int>(-1), 42);
   lua::pop(b.raw(), 1);
 
-  luakit::State c;
+  luakit::Interpreter c;
   c = std::move(b);  // must close c's original state, not leak it
   CHECK(b.raw() == nullptr);
   CHECK(c.raw() == raw);
@@ -82,7 +82,7 @@ auto test_move() -> void {
 
 auto test_errors_are_exceptions() -> void {
   t::section("script failures become luakit::Error");
-  luakit::State s;
+  luakit::Interpreter s;
   s.open_libs();
 
   bool caught = false;
@@ -110,7 +110,7 @@ auto test_errors_are_exceptions() -> void {
 
 auto test_preload_and_bind() -> void {
   t::section("preload and bind");
-  luakit::State s;
+  luakit::Interpreter s;
   s.open_libs().bind<Widget>(widget_methods).preload("mod", open_mod);
 
   // Not loaded until required.
@@ -128,7 +128,7 @@ auto test_preload_and_bind() -> void {
 
 auto test_script_bytecode() -> void {
   t::section("script_bytecode accepts plain source too");
-  luakit::State s;
+  luakit::Interpreter s;
   s.open_libs();
   const char *src = "bc = 'loaded'";
   s.script_bytecode(src, std::char_traits<char>::length(src), "@fake.lua");

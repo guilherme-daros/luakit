@@ -1,6 +1,6 @@
 #pragma once
 
-#include "luakit/api.hpp"
+#include "luakit/core/api.hpp"
 
 #include <cstdio>
 #include <exception>

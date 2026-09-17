@@ -72,9 +72,9 @@ if(Python3_FOUND)
   add_custom_target(
     api
     COMMAND "${Python3_EXECUTABLE}" tools/gen_api.py --lua-include
-            "${Lua54_INCLUDE_DIR}" -o lib/luakit/api_gen.hpp
+            "${Lua54_INCLUDE_DIR}" -o lib/luakit/core/api_gen.hpp
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Regenerating lib/luakit/api_gen.hpp"
+    COMMENT "Regenerating lib/luakit/core/api_gen.hpp"
     VERBATIM)
 else()
   message(STATUS "python3 not found: `api` target unavailable")
@@ -92,7 +92,7 @@ file(GLOB_RECURSE LUNA_FORMAT_CXX CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/test/*.hpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/*.hpp")
 list(REMOVE_ITEM LUNA_FORMAT_CXX
-     "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/api_gen.hpp")
+     "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/core/api_gen.hpp")
 
 file(GLOB_RECURSE LUNA_FORMAT_LUA CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/lua/*.lua")

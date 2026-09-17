@@ -1,8 +1,8 @@
 #pragma once
 
-#include "luakit/binding.hpp"
 #include "luakit/guard.hpp"
 #include "luakit/stack.hpp"
+#include "luakit/userdata.hpp"
 
 #include <cstddef>
 #include <tuple>
@@ -94,7 +94,7 @@ auto free_impl(lua::State *L) -> int {
 
 template <auto M, typename R, typename C, typename... A, std::size_t... I>
 auto method_call(lua::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
-  Binding<C>::arg(L, 1);  // validates self, raises on a foreign or dead object
+  Userdata<C>::check(L, 1);  // validates self, raises on a foreign or dead object
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 2), ...);
 
   C *self = Stack<C *>::get(L, 1);
@@ -121,7 +121,7 @@ auto ctor_call(lua::State *L, std::index_sequence<I...>) -> int {
   // Storage is reserved before any argument is materialised, so the raising
   // allocation happens while nothing with a destructor is alive. If the
   // constructor then throws, live is still false and __gc skips the wreckage.
-  auto *b = Binding<T>::reserve(L);
+  auto *b = Userdata<T>::reserve(L);
 
   std::tuple<stack_key_t<A>...> args{Stack<stack_key_t<A>>::get(L, static_cast<int>(I) + 1)...};
   new (b->storage) T(std::get<I>(args)...);
@@ -161,7 +161,7 @@ inline constexpr lua::CFunction method = &guard<&detail::method_impl<M>>;
 
 // Bind a constructor: {"new", luakit::ctor<Tracker, std::string>}.
 //
-// Unlike a hand-written creator calling Binding<T>::emplace, this is already
+// Unlike a hand-written creator calling Userdata<T>::emplace, this is already
 // inside guard<>, so a throwing constructor becomes a Lua error instead of
 // std::terminate.
 template <typename T, typename... Args>

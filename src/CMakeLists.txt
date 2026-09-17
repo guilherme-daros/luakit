@@ -46,10 +46,16 @@ add_custom_command(
   COMMENT "Embedding init.lua (${LUNA_EMBED}) as a byte array"
   VERBATIM)
 
-add_executable(luna_demo main.cpp luna.cpp tracker.cpp "${LUNA_GEN_DIR}/init_lua.h")
+# Each Lua module exposed to scripts lives in packages/. main.cpp is the host
+# that registers them.
+set(LUNA_PACKAGES packages/luna.cpp packages/tracker.cpp)
+
+add_executable(luna_demo main.cpp ${LUNA_PACKAGES} "${LUNA_GEN_DIR}/init_lua.h")
 
 set_target_properties(luna_demo PROPERTIES OUTPUT_NAME main)
 
+# src/ on the path is what lets main.cpp say "packages/luna.hpp" while the
+# package sources say "luna.hpp" relative to themselves.
 target_include_directories(luna_demo PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}"
                                              "${LUNA_GEN_DIR}")
 

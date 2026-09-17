@@ -15,7 +15,7 @@
 
 #pragma once
 
-#include "luakit/api_gen.hpp"
+#include "luakit/core/api_gen.hpp"
 
 #include <cstddef>
 

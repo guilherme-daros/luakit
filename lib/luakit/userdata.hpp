@@ -1,6 +1,6 @@
 #pragma once
 
-#include "luakit/api.hpp"
+#include "luakit/core/api.hpp"
 
 #include <new>
 #include <utility>
@@ -22,7 +22,7 @@ struct Box {
 };
 
 template <typename T>
-struct Binding {
+struct Userdata {
   using box_type = Box<T>;
 
   // Pushes GC-managed storage with the metatable attached, marked not-yet-
@@ -52,7 +52,7 @@ struct Binding {
   }
 
   // The T at stack index idx, or a Lua error if it is not one.
-  static auto arg(lua::State *L, int idx) -> T * {
+  static auto check(lua::State *L, int idx) -> T * {
     auto *b = static_cast<box_type *>(lua::aux::checkudata(L, idx, Metatable<T>::k_name));
     if (!b->live) lua::aux::error(L, "%s used after finalization", Metatable<T>::k_name);
     return b->obj();

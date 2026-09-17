@@ -24,5 +24,5 @@ printL("empty mean -> " .. tostring(select(2, pcall(empty.mean, empty))))
 
 -- Dropping the last reference makes the collector run ~Tracker
 empty = nil
-collectgarbage()
-printL("(collected)")
+-- collectgarbage()
+-- printL("(collected)")
