@@ -1,0 +1,8 @@
+# 4-space indent to match the existing Lua, rather than StyLua's default tabs.
+#
+# column_width stays at StyLua's default 120 on purpose. Dropping it to 80 to
+# match the C++ side breaks the long print() calls in init.lua into multi-line
+# blocks that are noticeably harder to read.
+indent_type = "Spaces"
+indent_width = 4
+column_width = 120

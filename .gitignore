@@ -1,0 +1,6 @@
+# Makefile build output
+build/
+
+# CMake build trees
+build-*/
+cmake-build-*/
