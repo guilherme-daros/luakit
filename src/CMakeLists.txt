@@ -14,7 +14,7 @@ set(LUNA_LUA_SRC "${CMAKE_SOURCE_DIR}/lua/init.lua")
 
 # Each Lua module exposed to scripts lives in packages/. main.cpp is the host
 # that registers them.
-set(LUNA_PACKAGES packages/luna.cpp packages/tracker.cpp)
+set(LUNA_PACKAGES packages/luna.cpp packages/tracker.cpp packages/world.cpp)
 
 add_executable(luna_demo main.cpp ${LUNA_PACKAGES})
 
