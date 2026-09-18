@@ -1,11 +1,13 @@
 #include <cstdio>
-#include <stdexcept>
 
 #include "luakit/interpreter.hpp"
 
-#include "init_lua.h"
 #include "packages/luna.hpp"
 #include "packages/tracker.hpp"
+
+#ifdef LUNA_EMBEDDED_SCRIPT
+#include "init_lua.h"  // generated: init_lua[], init_lua_len
+#endif
 
 auto main(int argc, char **argv) -> int try {
   (void)argc;
@@ -17,7 +19,11 @@ auto main(int argc, char **argv) -> int try {
   interpreter.preload(mod::luna());
   interpreter.preload(mod::tracker());
 
-  interpreter.script_file("lua/init.lua");
+#ifdef LUNA_EMBEDDED_SCRIPT
+  interpreter.script_bytecode(init_lua, init_lua_len, "@lua/init.lua");
+#else
+  interpreter.script_file(LUNA_SCRIPT_PATH);
+#endif
 
   return 0;
 

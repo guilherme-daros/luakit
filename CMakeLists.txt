@@ -35,15 +35,39 @@ option(LUNA_BUILD_DEMO "Build the demo host" ON)
 option(LUNA_BUILD_TESTS "Build the luakit test suite" ON)
 option(LUNA_SANITIZE "Build tests with AddressSanitizer and UBSan" ON)
 
-# bytecode: precompile with luac (default).
-# source:   embed the .lua text and let liblua parse it at startup; slower to
-#           start, but immune to bytecode version skew across machines.
-set(LUNA_EMBED "bytecode" CACHE STRING "How to embed Lua scripts")
-set_property(CACHE LUNA_EMBED PROPERTY STRINGS bytecode source)
+# How lua/init.lua reaches the interpreter.
+#
+# bytecode: precompile with luac and bake the bytes into the executable.
+# source:   bake the .lua text in and let liblua parse it at startup; slower
+#           to start, but immune to bytecode version skew across machines.
+# file:     read lua/init.lua from disk at startup, so editing a script means
+#           rerunning rather than rebuilding.
+#
+# A release build has to be self-contained, so it embeds; a debug build
+# favours the edit-run loop. An empty CMAKE_BUILD_TYPE is an unoptimised
+# build, so it counts as a debug one. Multi-config generators cannot answer
+# this at configure time and need -DLUNA_EMBED= to be passed explicitly.
+if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "")
+  set(LUNA_EMBED_DEFAULT "file")
+else()
+  set(LUNA_EMBED_DEFAULT "bytecode")
+endif()
 
-# Strips line numbers and local names from the bytecode. Turn off while
-# iterating, so script errors keep useful tracebacks.
-option(LUNA_STRIP_DEBUG "Strip debug info from embedded bytecode" ON)
+set(LUNA_EMBED "${LUNA_EMBED_DEFAULT}"
+    CACHE STRING "How lua/init.lua reaches the interpreter")
+set_property(CACHE LUNA_EMBED PROPERTY STRINGS bytecode source file)
+
+# Strips line numbers and local names from the bytecode, which costs script
+# errors their tracebacks. Off for a debug build, on the same reasoning as
+# LUNA_EMBED: it only matters if bytecode was asked for explicitly there.
+if(LUNA_EMBED_DEFAULT STREQUAL "file")
+  set(LUNA_STRIP_DEBUG_DEFAULT OFF)
+else()
+  set(LUNA_STRIP_DEBUG_DEFAULT ON)
+endif()
+
+option(LUNA_STRIP_DEBUG "Strip debug info from embedded bytecode"
+       ${LUNA_STRIP_DEBUG_DEFAULT})
 
 if(LUNA_BUILD_DEMO)
   add_subdirectory(src)
