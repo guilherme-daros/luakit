@@ -14,6 +14,9 @@ project(
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
+# luakit_embed_script(), for hosts baking their scripts into the executable.
+include("${CMAKE_CURRENT_LIST_DIR}/cmake/luakit-embed.cmake")
+
 # Must precede target_include_directories: CMAKE_INSTALL_INCLUDEDIR is
 # undefined until this runs, and an empty INSTALL_INTERFACE silently exports a
 # target with no usable include path.
@@ -59,8 +62,10 @@ install(
   NAMESPACE luakit::
   DESTINATION "${LUAKIT_CMAKE_DIR}")
 
-# Shipped so the generated config can resolve Lua on the consumer's machine.
+# FindLua54 so the generated config can resolve Lua on the consumer's machine,
+# and luakit-embed so an installed luakit still offers luakit_embed_script.
 install(FILES "${CMAKE_CURRENT_LIST_DIR}/cmake/FindLua54.cmake"
+              "${CMAKE_CURRENT_LIST_DIR}/cmake/luakit-embed.cmake"
         DESTINATION "${LUAKIT_CMAKE_DIR}")
 
 configure_package_config_file(

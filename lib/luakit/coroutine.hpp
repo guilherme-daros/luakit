@@ -1,8 +1,10 @@
 #pragma once
 
 #include "luakit/core/api.hpp"
+#include "luakit/error.hpp"
 #include "luakit/function.hpp"
 #include "luakit/interpreter.hpp"
+#include "luakit/ref.hpp"
 #include "luakit/stack.hpp"
 
 #include <optional>
@@ -21,11 +23,10 @@ enum class Status { suspended, finished };
 // collected, not closed. It survives only while Lua still references it, so
 // holding nothing but the core::State* lets the collector free it underneath
 // you -- a use-after-free that surfaces only once a collection happens to run.
-// The constructor therefore anchors the thread in the registry with aux::ref
-// and the destructor releases it with unref.
+// The thread is therefore held by a Ref, which anchors it in the registry.
 //
-// Not supported: a bound C++ function yielding from inside a resume. That
-// needs lua_yieldk and continuation functions, which is a different design.
+// For a bound C++ function that suspends the coroutine calling it, see
+// luakit::yielding at the bottom of this header.
 class Coroutine {
  public:
   // Runs the function held in a global of the given name.
@@ -47,7 +48,7 @@ class Coroutine {
   Coroutine(Coroutine &&other) noexcept
       : host_(std::exchange(other.host_, nullptr)),
         co_(std::exchange(other.co_, nullptr)),
-        ref_(std::exchange(other.ref_, core::NOREF)),
+        anchor_(std::move(other.anchor_)),
         finished_(std::exchange(other.finished_, true)) {}
 
   auto operator=(Coroutine &&other) noexcept -> Coroutine & {
@@ -55,7 +56,7 @@ class Coroutine {
       release();
       host_ = std::exchange(other.host_, nullptr);
       co_ = std::exchange(other.co_, nullptr);
-      ref_ = std::exchange(other.ref_, core::NOREF);
+      anchor_ = std::move(other.anchor_);
       finished_ = std::exchange(other.finished_, true);
     }
     return *this;
@@ -73,6 +74,17 @@ class Coroutine {
   // An error inside the coroutine throws Error, which also marks it finished.
   template <typename R = void, typename... Args>
   auto resume(Args &&...args) -> std::conditional_t<std::is_void_v<R>, bool, std::optional<R>> {
+    // The yielded values have to come off the thread's stack before the next
+    // resume, so anything R borrows from them would dangle the moment this
+    // function returns. Copying types only.
+    if constexpr (!std::is_void_v<R>) {
+      static_assert(!Stack<R>::borrows,
+                    "luakit: Coroutine::resume cannot return a borrowed type. The yielded value is "
+                    "removed from the thread before resume returns, so a std::string_view, const "
+                    "char * or registered-class pointer would outlive it. Use std::string, or read "
+                    "the value off raw() yourself.");
+    }
+
     if (done()) return stop<R>();
 
     (Stack<detail::stack_key_t<Args>>::push(co_, std::forward<Args>(args)), ...);
@@ -137,27 +149,26 @@ class Coroutine {
   // Takes the function on top of the host stack, creates the thread, anchors
   // it, and moves the function onto the thread's own stack ready to run.
   auto adopt_top() -> void {
-    co_ = core::newthread(host_);                       // [fn, thread]
-    ref_ = core::aux::ref(host_, core::REGISTRYINDEX);  // pops thread, anchors it
-    core::xmove(host_, co_, 1);                         // fn moves to the thread
+    co_ = core::newthread(host_);  // [fn, thread]
+    anchor_ = Ref::pop(host_);     // pops the thread, anchors it
+    core::xmove(host_, co_, 1);    // fn moves to the thread
   }
 
   auto take_message() -> std::string {
-    const char *err = core::gettop(co_) > 0 ? core::tostring(co_, -1) : nullptr;
-    std::string msg = err ? err : "?";
+    std::string msg = detail::take_error(co_);
     core::settop(co_, 0);
     return msg;
   }
 
   // A destructor must not throw, so closethread's status is ignored. Closing
-  // first gives any pending <close> variables a deterministic run.
+  // first gives any pending <close> variables a deterministic run, which
+  // releasing the anchor alone would not.
   auto release() noexcept -> void {
-    if (ref_ == core::NOREF) return;
+    if (!anchor_) return;
     if (co_) core::closethread(co_, host_);
-    core::aux::unref(host_, core::REGISTRYINDEX, ref_);
+    anchor_.reset();
     host_ = nullptr;
     co_ = nullptr;
-    ref_ = core::NOREF;
   }
 
   template <typename R = void>
@@ -170,8 +181,55 @@ class Coroutine {
 
   core::State *host_ = nullptr;  // must outlive this object: unref touches it
   core::State *co_ = nullptr;
-  int ref_ = core::NOREF;
+  Ref anchor_;
   bool finished_ = false;
 };
+
+namespace detail {
+
+// Resumes a yielded C function.
+//
+// The stack here holds exactly what the resume passed in -- the call's own
+// arguments and whatever it yielded are both long gone -- so all of it is the
+// result and gettop is the count.
+inline auto after_yield(core::State *L, int status, core::KContext ctx) -> int {
+  (void)status;
+  (void)ctx;
+  return core::gettop(L);
+}
+
+template <auto F>
+auto yielding_impl(core::State *L) -> int {
+  if (!core::isyieldable(L)) {
+    return core::aux::error(L, "luakit: this function can only be called from inside a coroutine");
+  }
+
+  // The bound function runs inside guard<>, so a C++ exception from it becomes
+  // a Lua error. yieldk is deliberately left outside: it leaves by longjmp,
+  // and doing that out of a try block is not something worth relying on.
+  const int nresults = guard<&free_impl<F>>(L);
+
+  return core::yieldk(L, nresults, 0, &after_yield);
+}
+
+}  // namespace detail
+
+// Binds a function that suspends the coroutine calling it -- the other half of
+// Coroutine, and what a mod needs to write `sleep(2)`:
+//
+//   auto sleep(double seconds) -> void { scheduler.wake_in(seconds); }
+//   {"sleep", luakit::yielding<sleep>}
+//
+// The script calls sleep(2) and stops there. Whatever the host later passes to
+// resume becomes the call's results, so a scheduler can hand back the elapsed
+// time, or nothing at all.
+//
+// Anything the bound function itself returns is yielded to the resumer, which
+// is how it says *why* it suspended.
+//
+// Calling one outside a coroutine is an error rather than a no-op: silently
+// continuing would run the rest of the script at the wrong time.
+template <auto F>
+inline constexpr core::CFunction yielding = &detail::yielding_impl<F>;
 
 }  // namespace luakit

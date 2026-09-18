@@ -31,8 +31,12 @@ auto test_methods() -> void {
   CHECK_STR(eval(f.L, "m.counter():label()"), "counter");
   // reset() returns void, so the chain stops there: nothing to index.
   CHECK(contains(eval(f.L, "m.counter():bump(5):reset():value()"), "index a nil value"));
-  CHECK(contains(eval(f.L, "getmetatable(m.counter()).__index.value({})"), "test.Counter expected"));
-  CHECK(contains(eval(f.L, "getmetatable(m.counter()).__index.bump(m.counter())"), "bad argument #2"));
+  // A bound method checks its own receiver and arguments, so pulling one off
+  // an object and calling it with the wrong self is still refused. Reaching it
+  // through the object rather than through the metatable, because __index is a
+  // dispatch closure now and the method table is its upvalue.
+  CHECK(contains(eval(f.L, "(m.counter().value)({})"), "test.Counter expected"));
+  CHECK(contains(eval(f.L, "(m.counter().bump)(m.counter())"), "bad argument #2"));
 }
 
 }  // namespace

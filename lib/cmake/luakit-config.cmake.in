@@ -11,4 +11,8 @@ list(REMOVE_ITEM CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
 include("${CMAKE_CURRENT_LIST_DIR}/luakit-targets.cmake")
 
+# luakit_embed_script(), so find_package(luakit) offers the same helper an
+# add_subdirectory(luakit) does.
+include("${CMAKE_CURRENT_LIST_DIR}/luakit-embed.cmake")
+
 check_required_components(luakit)

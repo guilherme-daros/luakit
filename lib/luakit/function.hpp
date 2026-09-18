@@ -3,6 +3,7 @@
 #include "luakit/guard.hpp"
 #include "luakit/stack.hpp"
 #include "luakit/userdata.hpp"
+#include "luakit/variadic.hpp"
 
 #include <cstddef>
 #include <tuple>
@@ -41,13 +42,37 @@ struct signature<R (C::*)(A...) noexcept> : signature<R (C::*)(A...)> {};
 template <typename R, typename C, typename... A>
 struct signature<R (C::*)(A...) const noexcept> : signature<R (C::*)(A...)> {};
 
-// Which Stack<> specialization handles a parameter. References to registered
-// classes stay references so the object is not copied; everything else decays,
-// so `const std::string &` and `std::string` share one specialization.
-template <typename T>
-using stack_key_t =
-    std::conditional_t<std::is_lvalue_reference_v<T> && Registered<std::remove_cv_t<std::remove_reference_t<T>>>,
-                       std::remove_cv_t<std::remove_reference_t<T>> &, std::decay_t<T>>;
+// A Variadic reads from its own index to the top of the stack, so a parameter
+// after one would find its arguments already swallowed. Nothing about that is
+// detectable at the call site, which is why it is rejected at the bind.
+//
+// A struct rather than three separate assertions, because a static_assert
+// message has to be a literal and three copies of one would drift apart.
+template <typename... A>
+struct RequireVariadicLast {
+  static constexpr bool value = [] {
+    constexpr bool flags[] = {std::is_same_v<stack_key_t<A>, Variadic>..., false};
+    for (std::size_t i = 0; i + 1 < sizeof...(A); ++i) {
+      if (flags[i]) return false;
+    }
+    return true;
+  }();
+
+  static_assert(value,
+                "luakit: a Variadic parameter must come last. It reads every remaining argument, "
+                "so a parameter after it would have none left to read.");
+};
+
+// Hands a materialised argument to the callable. The tuple is used exactly
+// once, so an argument that is only movable -- a luakit::Function holding a
+// registry anchor, say -- can be moved out rather than copied. Forwarding as
+// stack_key_t rather than blanket-moving is what keeps a registered class
+// arriving as the T& it was stored as: std::move would turn that into a T&&
+// and stop binding.
+template <typename A, typename T>
+auto forward_arg(T &v) -> stack_key_t<A> && {
+  return std::forward<stack_key_t<A>>(v);
+}
 
 template <typename>
 struct is_tuple : std::false_type {};
@@ -77,6 +102,8 @@ auto invoke_and_push(core::State *L, Invoke &&invoke) -> int {
 
 template <auto F, typename R, typename... A, std::size_t... I>
 auto free_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
+  static_cast<void>(RequireVariadicLast<A...>::value);
+
   // Phase 1: validate every argument. A fold expression is ordered, so the
   // lowest bad argument is the one reported, and no C++ object exists yet.
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 1), ...);
@@ -85,7 +112,7 @@ auto free_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) ->
   // raise a Lua error, so the tuple can never be longjmp'd over.
   std::tuple<stack_key_t<A>...> args{Stack<stack_key_t<A>>::get(L, static_cast<int>(I) + 1)...};
 
-  return invoke_and_push<R>(L, [&] { return F(std::get<I>(args)...); });
+  return invoke_and_push<R>(L, [&] { return F(forward_arg<A>(std::get<I>(args))...); });
 }
 
 template <auto F>
@@ -98,6 +125,8 @@ auto free_impl(core::State *L) -> int {
 
 template <auto M, typename R, typename C, typename... A, std::size_t... I>
 auto method_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) -> int {
+  static_cast<void>(RequireVariadicLast<A...>::value);
+
   Userdata<C>::check(L, 1);  // validates self, raises on a foreign or dead object
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 2), ...);
 
@@ -107,19 +136,21 @@ auto method_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) 
   // A method returning C& is the chaining idiom: hand back the receiver that
   // is already on the stack rather than trying to re-wrap it.
   if constexpr (std::is_lvalue_reference_v<R> && std::is_same_v<std::remove_cv_t<std::remove_reference_t<R>>, C>) {
-    C *returned = &(self->*M)(std::get<I>(args)...);
+    C *returned = &(self->*M)(forward_arg<A>(std::get<I>(args))...);
     if (returned != self) {
       core::aux::error(L, "luakit: method returned a different object than self");
     }
     core::settop(L, 1);
     return 1;
   } else {
-    return invoke_and_push<R>(L, [&] { return (self->*M)(std::get<I>(args)...); });
+    return invoke_and_push<R>(L, [&] { return (self->*M)(forward_arg<A>(std::get<I>(args))...); });
   }
 }
 
 template <typename T, typename... A, std::size_t... I>
 auto ctor_call(core::State *L, std::index_sequence<I...>) -> int {
+  static_cast<void>(RequireVariadicLast<A...>::value);
+
   (Stack<stack_key_t<A>>::check(L, static_cast<int>(I) + 1), ...);
 
   // Storage is reserved before any argument is materialised, so the raising
@@ -128,8 +159,8 @@ auto ctor_call(core::State *L, std::index_sequence<I...>) -> int {
   auto *b = Userdata<T>::reserve(L);
 
   std::tuple<stack_key_t<A>...> args{Stack<stack_key_t<A>>::get(L, static_cast<int>(I) + 1)...};
-  new (b->storage) T(std::get<I>(args)...);
-  b->live = true;
+  new (Userdata<T>::storage(b)) T(forward_arg<A>(std::get<I>(args))...);
+  Userdata<T>::commit(L, b);
 
   return 1;  // the userdata reserve() pushed
 }

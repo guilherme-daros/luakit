@@ -1,25 +1,18 @@
 #pragma once
 
 #include "luakit/core/api.hpp"
+#include "luakit/error.hpp"
 #include "luakit/module.hpp"
 #include "luakit/stack.hpp"
+#include "luakit/table.hpp"
 #include "luakit/userdata.hpp"
 
 #include <cstddef>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 
 namespace luakit {
-
-// Thrown for failures on the host side: loading a chunk, running it, or
-// creating the interpreter. Errors raised *inside* Lua arrive as the message
-// of one of these after a failed pcall.
-class Error : public std::runtime_error {
- public:
-  using std::runtime_error::runtime_error;
-};
 
 // Owns a lua_State. This is the host-side entry point; code running inside a
 // bound callback is handed a borrowed core::State* instead and must not own it,
@@ -65,8 +58,9 @@ class Interpreter {
   }
 
   template <typename T>
-  auto bind(const core::aux::Reg *methods, const core::aux::Reg *meta = nullptr) -> Interpreter & {
-    Userdata<T>::register_class(L_, methods, meta);
+  auto bind(const core::aux::Reg *methods, const core::aux::Reg *meta = nullptr, const PropertyReg *props = nullptr)
+      -> Interpreter & {
+    Userdata<T>::register_class(L_, methods, meta, props);
     return *this;
   }
 
@@ -82,30 +76,84 @@ class Interpreter {
 
   auto script_file(const char *path) -> void { run(core::aux::loadfile(L_, path), "cannot load"); }
 
-  template <typename T>
-  auto push(T &&v) -> Interpreter & {
-    luakit::push(L_, std::forward<T>(v));
+  // Forgets a loaded module, so the next require runs its opener or file
+  // again. Unknown module names are not an error: the point is to end up with
+  // it not loaded.
+  auto unload(const char *module) -> Interpreter & {
+    core::aux::getsubtable(L_, core::REGISTRYINDEX, core::LOADED_TABLE);
+    core::pushnil(L_);
+    core::setfield(L_, -2, module);
+    core::pop(L_, 1);
     return *this;
   }
 
+  // Reloads a module in place, which is what makes editing a plugin without
+  // restarting the host possible.
+  //
+  // What this does not do is retrofit the new code onto anything the old
+  // version left behind. A table a script already captured, a callback the
+  // host is still holding, an object built from the previous metatable: all of
+  // them keep the old behaviour. Reloading works for plugins whose state lives
+  // in the module table and nowhere else, which is worth designing for if hot
+  // reload matters.
+  //
+  // A module that fails to load is left unloaded rather than half-loaded, so
+  // fixing the script and reloading again is the way out.
+  auto reload(const char *module) -> Interpreter & {
+    unload(module);
+
+    core::getglobal(L_, "require");
+    if (!core::isfunction(L_, -1)) {
+      core::pop(L_, 1);
+      throw Error("luakit: reload needs the standard libraries; call open_libs first");
+    }
+    core::pushstring(L_, module);
+    fail_if(detail::call_traced(L_, 1, 0), "error reloading");
+    return *this;
+  }
+
+  // Whether a module is currently loaded.
+  auto loaded(const char *module) -> bool {
+    core::aux::getsubtable(L_, core::REGISTRYINDEX, core::LOADED_TABLE);
+    const bool present = core::getfield(L_, -1, module) != core::TNIL;
+    core::pop(L_, 2);
+    return present;
+  }
+
+  // The globals table, _G.
+  auto globals() -> Table { return Table::globals(L_); }
+
+  // Reads a global, throwing if it is absent or not a T. The common case by
+  // far, so it is spelled out rather than left to globals().get<T>().
   template <typename T>
-  auto get(int idx) -> T {
-    return luakit::get<T>(L_, idx);
+  auto global(const char *name) -> T {
+    return globals().template get<T>(name);
+  }
+
+  // Reads a global, falling back when it is absent or the wrong type.
+  template <typename T>
+  auto global_or(const char *name, T fallback) -> T {
+    return globals().template get_or<T>(name, std::move(fallback));
+  }
+
+  template <typename T>
+  auto set_global(const char *name, T &&value) -> Interpreter & {
+    globals().set(name, std::forward<T>(value));
+    return *this;
   }
 
  private:
-  // Loads then calls, converting either failure into an Error.
+  // Loads then calls, converting either failure into an Error. The call is
+  // traced: a script author whose plugin fails ten frames deep gets the frames
+  // rather than just the innermost line.
   auto run(int load_status, const char *what) -> void {
     fail_if(load_status, what);
-    fail_if(core::pcall(L_, 0, 0, 0), "error running");
+    fail_if(detail::call_traced(L_, 0, 0), "error running");
   }
 
   auto fail_if(int status, const char *what) -> void {
     if (status == core::OK) return;
-    const char *err = core::gettop(L_) > 0 ? core::tostring(L_, -1) : nullptr;
-    std::string msg = err ? err : "?";
-    if (core::gettop(L_) > 0) core::pop(L_, 1);
-    throw Error(std::string(what) + ": " + msg);
+    throw Error(std::string(what) + ": " + detail::take_error(L_));
   }
 
   core::State *L_ = nullptr;

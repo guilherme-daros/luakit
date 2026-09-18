@@ -1,14 +1,22 @@
 #pragma once
 
 #include "luakit/core/api.hpp"
+#include "luakit/error.hpp"
 #include "luakit/userdata.hpp"
 
+#include <array>
+#include <concepts>
 #include <cstddef>
+#include <map>
+#include <memory>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -25,6 +33,7 @@ inline constexpr bool always_false = false;
 // skips destructors, so the phases are kept strictly apart:
 //
 //   name           human-readable type, for diagnostics
+//   borrows        true when get() returns a view into Lua-owned memory
 //   test(L, idx)   never raises, never allocates; answers "is this a T?"
 //   check(L, idx)  may raise a Lua error, but must not create a C++ object
 //   get(L, idx)    may create C++ objects (and may throw), but must NEVER
@@ -34,7 +43,14 @@ inline constexpr bool always_false = false;
 // Callers run every check first, then every get. A bad argument N is therefore
 // reported while no argument 1..N-1 object is alive to be leaked. `test` exists
 // so containers can validate elements and still report which element failed.
-template <typename T, typename = void>
+//
+// `borrows` marks the conversions that do not copy: const char *, string_view
+// and the registered-class pointers all point into memory the collector owns.
+// That is fine for a parameter, which lives only as long as the call, but a
+// caller that keeps the value past the point where Lua could collect it needs
+// to know. A composite borrows if any part of it does, so the flag propagates
+// through optional and vector rather than being restated.
+template <typename T>
 struct Stack {
   // A class type reaches here when it has no Metatable<T>, which is a far more
   // common mistake than a genuinely unhandled type, so the message names both.
@@ -44,9 +60,13 @@ struct Stack {
                 "else needs its own Stack<T>.");
 };
 
-template <typename T>
-struct Stack<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, bool>>> {
+// bool is excluded so it reaches its own specialization below, which is
+// strict about Lua truthiness.
+template <std::integral T>
+  requires(!std::same_as<T, bool>)
+struct Stack<T> {
   static constexpr const char *name = "integer";
+  static constexpr bool borrows = false;
   static auto test(core::State *L, int idx) noexcept -> bool {
     int ok = 0;
     core::tointegerx(L, idx, &ok);
@@ -60,9 +80,10 @@ struct Stack<T, std::enable_if_t<std::is_integral_v<T> && !std::is_same_v<T, boo
   }
 };
 
-template <typename T>
-struct Stack<T, std::enable_if_t<std::is_floating_point_v<T>>> {
+template <std::floating_point T>
+struct Stack<T> {
   static constexpr const char *name = "number";
+  static constexpr bool borrows = false;
   static auto test(core::State *L, int idx) noexcept -> bool {
     int ok = 0;
     core::tonumberx(L, idx, &ok);
@@ -81,6 +102,7 @@ struct Stack<T, std::enable_if_t<std::is_floating_point_v<T>>> {
 template <>
 struct Stack<bool> {
   static constexpr const char *name = "boolean";
+  static constexpr bool borrows = false;
   static auto test(core::State *L, int idx) noexcept -> bool { return core::type(L, idx) == core::TBOOLEAN; }
   static auto check(core::State *L, int idx) -> void { core::aux::checktype(L, idx, core::TBOOLEAN); }
   static auto get(core::State *L, int idx) noexcept -> bool { return core::toboolean(L, idx) != 0; }
@@ -95,6 +117,7 @@ struct Stack<bool> {
 template <>
 struct Stack<const char *> {
   static constexpr const char *name = "string";
+  static constexpr bool borrows = true;
   static auto test(core::State *L, int idx) noexcept -> bool { return core::isstring(L, idx) != 0; }
   static auto check(core::State *L, int idx) -> void { core::aux::checkstring(L, idx); }
   static auto get(core::State *L, int idx) noexcept -> const char * { return core::tolstring(L, idx, nullptr); }
@@ -110,6 +133,7 @@ struct Stack<const char *> {
 template <>
 struct Stack<std::string> {
   static constexpr const char *name = "string";
+  static constexpr bool borrows = false;
   static auto test(core::State *L, int idx) noexcept -> bool { return core::isstring(L, idx) != 0; }
   static auto check(core::State *L, int idx) -> void { core::aux::checkstring(L, idx); }
   static auto get(core::State *L, int idx) -> std::string {
@@ -127,6 +151,7 @@ struct Stack<std::string> {
 template <>
 struct Stack<std::string_view> {
   static constexpr const char *name = "string";
+  static constexpr bool borrows = true;
   static auto test(core::State *L, int idx) noexcept -> bool { return core::isstring(L, idx) != 0; }
   static auto check(core::State *L, int idx) -> void { core::aux::checkstring(L, idx); }
   static auto get(core::State *L, int idx) noexcept -> std::string_view {
@@ -145,6 +170,7 @@ struct Stack<std::string_view> {
 template <typename T>
 struct Stack<std::optional<T>> {
   static constexpr const char *name = Stack<T>::name;
+  static constexpr bool borrows = Stack<T>::borrows;
   static auto test(core::State *L, int idx) noexcept -> bool {
     return core::isnoneornil(L, idx) || Stack<T>::test(L, idx);
   }
@@ -169,6 +195,7 @@ struct Stack<std::optional<T>> {
 template <typename T>
 struct Stack<std::vector<T>> {
   static constexpr const char *name = "table";
+  static constexpr bool borrows = Stack<T>::borrows;
 
   static auto test(core::State *L, int idx) noexcept -> bool {
     if (core::type(L, idx) != core::TTABLE) return false;
@@ -229,30 +256,365 @@ struct Stack<std::vector<T>> {
   }
 };
 
-// Registered classes, by pointer or reference. Creation goes through
-// Userdata<T>::emplace, so there is no push here: pushing a bare T* would have
-// no way to know whether Lua already owns that object.
-template <typename T>
-struct Stack<T *, std::enable_if_t<Registered<T>>> {
-  static constexpr const char *name = Metatable<T>::k_name;
+namespace detail {
+
+// ------------------------------------------------- fixed-length sequences
+//
+// std::pair, std::array and std::tuple all map to { e1, ..., eN }, and all
+// three answer std::tuple_size and std::tuple_element, so one implementation
+// covers them.
+
+template <typename E>
+auto elem_test(core::State *L, int at, std::size_t i) noexcept -> bool {
+  core::rawgeti(L, at, static_cast<core::Integer>(i + 1));
+  const bool ok = Stack<E>::test(L, -1);
+  core::pop(L, 1);
+  return ok;
+}
+
+template <typename E>
+auto elem_get(core::State *L, int at, std::size_t i) -> E {
+  core::rawgeti(L, at, static_cast<core::Integer>(i + 1));
+  E out = Stack<E>::get(L, -1);
+  core::pop(L, 1);
+  return out;
+}
+
+template <typename Tup, std::size_t... I>
+auto fixed_test(core::State *L, int at, std::index_sequence<I...>) noexcept -> bool {
+  return (elem_test<std::tuple_element_t<I, Tup>>(L, at, I) && ...);
+}
+
+template <typename Tup, std::size_t... I>
+auto fixed_check(core::State *L, int at, std::index_sequence<I...>) -> void {
+  (
+      [&] {
+        if (elem_test<std::tuple_element_t<I, Tup>>(L, at, I)) return;
+        core::aux::argerror(L, at,
+                            core::pushfstring(L, "element %d is not a %s", static_cast<int>(I) + 1,
+                                              Stack<std::tuple_element_t<I, Tup>>::name));
+      }(),
+      ...);
+}
+
+// Braced init is ordered, so elements are read left to right and one that
+// throws part way unwinds those already built.
+template <typename Tup, std::size_t... I>
+auto fixed_get(core::State *L, int at, std::index_sequence<I...>) -> Tup {
+  return Tup{elem_get<std::tuple_element_t<I, Tup>>(L, at, I)...};
+}
+
+template <typename Tup, std::size_t... I>
+auto fixed_push(core::State *L, const Tup &v, std::index_sequence<I...>) -> int {
+  core::createtable(L, static_cast<int>(sizeof...(I)), 0);
+  const int t = core::gettop(L);
+  ((Stack<std::tuple_element_t<I, Tup>>::push(L, std::get<I>(v)),
+    core::rawseti(L, t, static_cast<core::Integer>(I) + 1)),
+   ...);
+  return 1;
+}
+
+template <typename Tup>
+inline constexpr bool fixed_borrows = []<std::size_t... I>(std::index_sequence<I...>) {
+  return (Stack<std::tuple_element_t<I, Tup>>::borrows || ...);
+}(std::make_index_sequence<std::tuple_size_v<Tup>>{});
+
+// The shared body of every fixed-length sequence specialization.
+template <typename Tup>
+struct FixedSequence {
+  using seq = std::make_index_sequence<std::tuple_size_v<Tup>>;
+  static constexpr int k_len = static_cast<int>(std::tuple_size_v<Tup>);
+
+  static constexpr const char *name = "table";
+  static constexpr bool borrows = fixed_borrows<Tup>;
+
   static auto test(core::State *L, int idx) noexcept -> bool {
-    return core::aux::testudata(L, idx, Metatable<T>::k_name) != nullptr;
+    if (core::type(L, idx) != core::TTABLE) return false;
+    const int at = core::absindex(L, idx);
+    if (!core::checkstack(L, 2)) return false;
+    if (static_cast<int>(core::rawlen(L, at)) != k_len) return false;
+    return fixed_test<Tup>(L, at, seq{});
   }
+
+  static auto check(core::State *L, int idx) -> void {
+    const int at = core::absindex(L, idx);
+    core::aux::checktype(L, at, core::TTABLE);
+    core::aux::checkstack(L, 2, "luakit: sequence element");
+
+    const int len = static_cast<int>(core::rawlen(L, at));
+    if (len != k_len) {
+      core::aux::argerror(L, at, core::pushfstring(L, "expected %d elements, got %d", k_len, len));
+    }
+    fixed_check<Tup>(L, at, seq{});
+  }
+
+  static auto get(core::State *L, int idx) -> Tup {
+    const int at = core::absindex(L, idx);
+    if (!core::checkstack(L, 2)) throw std::runtime_error("luakit: cannot grow Lua stack");
+    return fixed_get<Tup>(L, at, seq{});
+  }
+
+  static auto push(core::State *L, const Tup &v) -> int { return fixed_push(L, v, seq{}); }
+};
+
+// -------------------------------------------------------------- maps
+//
+// The copy of the key in each loop is not optional. Reading a number key as a
+// string converts the stack slot in place, which is documented Lua behaviour
+// and also corrupts the traversal: the next lua_next then fails with "invalid
+// key to 'next'". So the key is duplicated and the copy is what gets read.
+
+template <typename M>
+auto map_test(core::State *L, int idx) noexcept -> bool {
+  using K = typename M::key_type;
+  using V = typename M::mapped_type;
+
+  if (core::type(L, idx) != core::TTABLE) return false;
+  const int at = core::absindex(L, idx);
+  if (!core::checkstack(L, 4)) return false;
+
+  core::pushnil(L);
+  while (core::next(L, at)) {  // [key, value]
+    core::pushvalue(L, -2);    // [key, value, key-copy]
+    const bool ok = Stack<K>::test(L, -1) && Stack<V>::test(L, -2);
+    core::pop(L, 2);  // [key]
+    if (!ok) {
+      core::pop(L, 1);  // abandon the traversal
+      return false;
+    }
+  }
+  return true;
+}
+
+template <typename M>
+auto map_check(core::State *L, int idx) -> void {
+  using K = typename M::key_type;
+  using V = typename M::mapped_type;
+
+  const int at = core::absindex(L, idx);
+  core::aux::checktype(L, at, core::TTABLE);
+  core::aux::checkstack(L, 4, "luakit: map entry");
+
+  core::pushnil(L);
+  while (core::next(L, at)) {
+    core::pushvalue(L, -2);
+    const bool key_ok = Stack<K>::test(L, -1);
+    const bool value_ok = Stack<V>::test(L, -2);
+
+    if (!key_ok || !value_ok) {
+      // Nothing with a destructor is alive here: argerror longjmps, and Lua
+      // unwinds its own stack on the way out.
+      const char *shown = core::tostring(L, -1);
+      core::aux::argerror(L, at,
+                          core::pushfstring(L, key_ok ? "value at key '%s' is not a %s" : "key '%s' is not a %s",
+                                            shown ? shown : "?", key_ok ? Stack<V>::name : Stack<K>::name));
+    }
+    core::pop(L, 2);
+  }
+}
+
+template <typename M>
+auto map_get(core::State *L, int idx) -> M {
+  using K = typename M::key_type;
+  using V = typename M::mapped_type;
+
+  const int at = core::absindex(L, idx);
+  if (!core::checkstack(L, 4)) throw std::runtime_error("luakit: cannot grow Lua stack");
+
+  M out;
+  core::pushnil(L);
+  while (core::next(L, at)) {
+    core::pushvalue(L, -2);
+    K key = Stack<K>::get(L, -1);
+    V value = Stack<V>::get(L, -2);
+    out.emplace(std::move(key), std::move(value));
+    core::pop(L, 2);
+  }
+  return out;
+}
+
+template <typename M>
+auto map_push(core::State *L, const M &m) -> int {
+  core::createtable(L, 0, static_cast<int>(m.size()));
+  const int t = core::gettop(L);
+  for (const auto &entry : m) {
+    Stack<typename M::key_type>::push(L, entry.first);
+    Stack<typename M::mapped_type>::push(L, entry.second);
+    core::rawset(L, t);
+  }
+  return 1;
+}
+
+// The shared body of every map-like specialization.
+template <typename M>
+struct MapLike {
+  static constexpr const char *name = "table";
+  static constexpr bool borrows = Stack<typename M::key_type>::borrows || Stack<typename M::mapped_type>::borrows;
+
+  static auto test(core::State *L, int idx) noexcept -> bool { return map_test<M>(L, idx); }
+  static auto check(core::State *L, int idx) -> void { map_check<M>(L, idx); }
+  static auto get(core::State *L, int idx) -> M { return map_get<M>(L, idx); }
+  static auto push(core::State *L, const M &m) -> int { return map_push(L, m); }
+};
+
+}  // namespace detail
+
+// A Lua table used as a dictionary, which is what a plugin's settings table
+// usually is. Iteration order is Lua's, so the C++ side decides whether it
+// wants the keys sorted by choosing map over unordered_map.
+template <typename K, typename V, typename C, typename A>
+struct Stack<std::map<K, V, C, A>> : detail::MapLike<std::map<K, V, C, A>> {};
+
+template <typename K, typename V, typename H, typename E, typename A>
+struct Stack<std::unordered_map<K, V, H, E, A>> : detail::MapLike<std::unordered_map<K, V, H, E, A>> {};
+
+// A two-element sequence table, { first, second }. The readable way to move a
+// coordinate or a key-value pair across without inventing a class for it.
+template <typename A, typename B>
+struct Stack<std::pair<A, B>> : detail::FixedSequence<std::pair<A, B>> {};
+
+// A sequence table of exactly N elements. The length is part of the type, so a
+// table of the wrong size is rejected by name rather than silently padded.
+template <typename T, std::size_t N>
+struct Stack<std::array<T, N>> : detail::FixedSequence<std::array<T, N>> {};
+
+// A tuple as a *value* is a fixed-length sequence table, like pair and array.
+//
+// A tuple *returned from a bound function* is the one exception: that means
+// multiple Lua values, because multiple returns are how Lua says it and there
+// is no other spelling for them. The special case lives in
+// detail::invoke_and_push and in Function::call, and nowhere else -- a tuple
+// parameter, a tuple inside a vector, a tuple written to a table field all go
+// through this specialization and are tables.
+template <typename... Ts>
+struct Stack<std::tuple<Ts...>> : detail::FixedSequence<std::tuple<Ts...>> {};
+
+// Registered classes, by pointer. Pushing lends the object rather than copying
+// it: the userdata is marked borrowed, so __gc leaves the host's object alone.
+// That is what lets an engine pass a script its own entity.
+//
+// Borrowed in the Stack<T> sense too, and for the matching reason -- the
+// pointer stays good only while the userdata holding it is reachable.
+template <Registered T>
+struct Stack<T *> {
+  static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = true;
+  static auto test(core::State *L, int idx) noexcept -> bool { return Userdata<T>::try_get(L, idx) != nullptr; }
   static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
-  static auto get(core::State *L, int idx) noexcept -> T * {
-    return static_cast<Box<T> *>(core::touserdata(L, idx))->obj();
+  // Goes through try_get rather than reading the box, because a Derived
+  // arriving here needs its pointer adjusted to the base subobject.
+  static auto get(core::State *L, int idx) noexcept -> T * { return Userdata<T>::try_get(L, idx); }
+  static auto push(core::State *L, T *v) -> int {
+    Userdata<T>::push_ref(L, v);
+    return 1;
   }
 };
 
-template <typename T>
-struct Stack<T &, std::enable_if_t<Registered<T>>> {
+template <Registered T>
+struct Stack<T &> {
   static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = true;
   static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
   static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
   static auto get(core::State *L, int idx) noexcept -> T & { return *Stack<T *>::get(L, idx); }
+  static auto push(core::State *L, T &v) -> int {
+    Userdata<T>::push_ref(L, &v);
+    return 1;
+  }
 };
 
-// Convenience wrappers for hand-written code.
+// A registered class by value: Lua gets its own copy, which the collector owns
+// and destroys. This is the safe default for a function handing back something
+// with no lifetime of its own, where lending a pointer would dangle.
+template <Registered T>
+struct Stack<T> {
+  static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = false;
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+
+  static auto get(core::State *L, int idx) -> T {
+    static_assert(std::copy_constructible<T>,
+                  "luakit: taking this class from Lua by value needs it to be copy-constructible. "
+                  "Take it as T & or T * instead, which lends the object rather than copying it.");
+    return *Stack<T *>::get(L, idx);
+  }
+
+  // Constructed straight into the box, so the copy happens after the raising
+  // allocation rather than before it.
+  static auto push(core::State *L, const T &v) -> int {
+    auto *b = Userdata<T>::reserve(L);
+    new (Userdata<T>::storage(b)) T(v);
+    Userdata<T>::commit(L, b);
+    return 1;
+  }
+
+  static auto push(core::State *L, T &&v) -> int {
+    auto *b = Userdata<T>::reserve(L);
+    new (Userdata<T>::storage(b)) T(std::move(v));
+    Userdata<T>::commit(L, b);
+    return 1;
+  }
+};
+
+// A shared_ptr shares ownership with the host, so neither side has to outlive
+// the other -- the natural fit for an object a script may keep a handle to
+// after the engine has let go of it.
+template <Registered T>
+struct Stack<std::shared_ptr<T>> {
+  static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = false;
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+
+  // Only a box that actually holds a shared_ptr can hand its count out. An
+  // owned or borrowed object has no count to share, and aliasing one into a
+  // fresh shared_ptr would invent an owner that does not exist.
+  //
+  // The exact type is required too: a Derived box holds a shared_ptr<Derived>,
+  // and reading those bytes as a shared_ptr<Base> would be a lie about the
+  // layout even where the pointers happen to coincide.
+  static auto get(core::State *L, int idx) -> std::shared_ptr<T> {
+    void *exact = core::aux::testudata(L, idx, Metatable<T>::k_name);
+    if (!exact) return {};
+    auto *b = static_cast<Box<T> *>(exact);
+    if (b->mode != Ownership::shared) return {};
+    return *Userdata<T>::template payload_of<std::shared_ptr<T>>(b);
+  }
+
+  static auto push(core::State *L, const std::shared_ptr<T> &v) -> int {
+    Userdata<T>::push_shared(L, v);
+    return 1;
+  }
+};
+
+namespace detail {
+
+// Which Stack<> specialization handles a value of type T. References to
+// registered classes stay references, so the object is lent rather than
+// copied; everything else decays, so `const std::string &` and `std::string`
+// share one specialization.
+template <typename T>
+using stack_key_t =
+    std::conditional_t<std::is_lvalue_reference_v<T> && Registered<std::remove_cv_t<std::remove_reference_t<T>>>,
+                       std::remove_cv_t<std::remove_reference_t<T>> &, std::decay_t<T>>;
+
+// Converts, or throws. The counterpart to luakit::get below, for host code:
+// a failed Stack<T>::check raises a Lua error, and a call from outside a
+// protected frame would longjmp straight to the panic handler and abort.
+template <typename T>
+auto read_result(core::State *L, int idx) -> T {
+  if (!Stack<T>::test(L, idx)) {
+    throw Error(std::string("luakit: Lua gave a ") + core::aux::typename_(L, idx) + " where " + Stack<T>::name +
+                " was expected");
+  }
+  return Stack<T>::get(L, idx);
+}
+
+}  // namespace detail
+
+// Convenience wrappers for hand-written code running under a protected call:
+// get() reports a bad value by raising, the way a bound function should.
 template <typename T>
 auto get(core::State *L, int idx) -> T {
   Stack<T>::check(L, idx);
@@ -261,7 +623,7 @@ auto get(core::State *L, int idx) -> T {
 
 template <typename T>
 auto push(core::State *L, T &&v) -> int {
-  return Stack<std::decay_t<T>>::push(L, std::forward<T>(v));
+  return Stack<detail::stack_key_t<T>>::push(L, std::forward<T>(v));
 }
 
 }  // namespace luakit

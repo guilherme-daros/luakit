@@ -9,9 +9,13 @@
 // Lua ships 62 of its API entry points as preprocessor macros, which have no
 // address and no namespace. Each one is rewritten here as a real function.
 //
-// Deliberately omitted: the nine LUA_COMPAT_APIINTCASTS shims (luaL_checkint,
-// lua_tounsigned, ...) and the internal output macros (lua_writestring,
-// lua_writeline, lua_writestringerror, luaL_intop).
+// Deliberately omitted: everything in lua.h's compatibility section -- the
+// nine LUA_COMPAT_APIINTCASTS shims (luaL_checkint, lua_tounsigned, ...) and
+// the three 5.3 uservalue spellings, which are just lua_newuserdatauv,
+// lua_getiuservalue and lua_setiuservalue with the count fixed at one. Those
+// three are aliased under their real names in api_gen.hpp. Also omitted are
+// the internal output macros (lua_writestring, lua_writeline,
+// lua_writestringerror, luaL_intop).
 
 #pragma once
 
@@ -102,15 +106,6 @@ inline auto yield(State *L, int nresults) -> int {
 }
 
 // ---- userdata ----
-inline auto newuserdata(State *L, std::size_t sz) -> void * {
-  return lua_newuserdata(L, sz);
-}
-inline auto getuservalue(State *L, int idx) -> int {
-  return lua_getuservalue(L, idx);
-}
-inline auto setuservalue(State *L, int idx) -> int {
-  return lua_setuservalue(L, idx);
-}
 inline auto getextraspace(State *L) -> void * {
   return lua_getextraspace(L);
 }

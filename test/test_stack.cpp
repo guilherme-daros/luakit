@@ -11,6 +11,24 @@ using tf::Fixture;
 
 namespace {
 
+// `borrows` is what stops a caller keeping a view into memory the collector
+// owns -- Coroutine::resume static_asserts on it. Checked here because a wrong
+// answer is silent until something dangles.
+static_assert(!luakit::Stack<int>::borrows);
+static_assert(!luakit::Stack<double>::borrows);
+static_assert(!luakit::Stack<bool>::borrows);
+static_assert(!luakit::Stack<std::string>::borrows);
+static_assert(luakit::Stack<const char *>::borrows);
+static_assert(luakit::Stack<std::string_view>::borrows);
+static_assert(luakit::Stack<tf::Counter *>::borrows);
+static_assert(luakit::Stack<tf::Counter &>::borrows);
+
+// Composites answer for their element, rather than restating it.
+static_assert(!luakit::Stack<std::optional<int>>::borrows);
+static_assert(luakit::Stack<std::optional<std::string_view>>::borrows);
+static_assert(!luakit::Stack<std::vector<std::string>>::borrows);
+static_assert(luakit::Stack<std::vector<std::string_view>>::borrows);
+
 auto test_scalar_roundtrip() -> void {
   t::section("scalar and string round-trips");
   Fixture f;

@@ -56,9 +56,7 @@ auto test_lifecycle() -> void {
   CHECK(s.raw() != nullptr);
   s.open_libs();
   s.script("x = 1 + 1");
-  core::getglobal(s.raw(), "x");
-  CHECK_EQ(s.get<int>(-1), 2);
-  core::pop(s.raw(), 1);
+  CHECK_EQ(s.global<int>("x"), 2);
 }
 
 auto test_move() -> void {
@@ -72,9 +70,7 @@ auto test_move() -> void {
   CHECK(a.raw() == nullptr);  // moved-from is emptied
   CHECK(b.raw() == raw);      // and owns the same interpreter
   b.script("y = y + 1");
-  core::getglobal(b.raw(), "y");
-  CHECK_EQ(b.get<int>(-1), 42);
-  core::pop(b.raw(), 1);
+  CHECK_EQ(b.global<int>("y"), 42);
 
   luakit::Interpreter c;
   c = std::move(b);  // must close c's original state, not leak it
@@ -110,6 +106,57 @@ auto test_errors_are_exceptions() -> void {
   s.script("z = 3");
 }
 
+// The frames are gone by the time pcall returns, so this only works if the
+// message handler ran at the point of the error.
+auto test_runtime_error_has_a_traceback() -> void {
+  t::section("a runtime error carries a traceback");
+  luakit::Interpreter s;
+  s.open_libs();
+
+  bool caught = false;
+  try {
+    s.script(
+        "local function inner() error('deep') end\n"
+        "local function outer() inner() end\n"
+        "outer()\n");
+  } catch (const luakit::Error &e) {
+    caught = true;
+    const std::string msg = e.what();
+    CHECK(msg.find("deep") != std::string::npos);
+    CHECK(msg.find("stack traceback:") != std::string::npos);
+    // Three frames deep: the reason the handler is worth having at all.
+    CHECK(msg.find("inner") != std::string::npos);
+    CHECK(msg.find("outer") != std::string::npos);
+  }
+  CHECK(caught);
+}
+
+// A table thrown by error{} has no string form, and must not be swallowed.
+auto test_non_string_error_object() -> void {
+  t::section("a non-string error object is still reported");
+  luakit::Interpreter s;
+  s.open_libs();
+
+  bool caught = false;
+  try {
+    s.script("error(setmetatable({}, {}))");
+  } catch (const luakit::Error &e) {
+    caught = true;
+    CHECK(std::string(e.what()).find("error object is a table value") != std::string::npos);
+  }
+  CHECK(caught);
+
+  // One that renders itself speaks for itself instead.
+  caught = false;
+  try {
+    s.script("error(setmetatable({}, {__tostring = function() return 'custom form' end}))");
+  } catch (const luakit::Error &e) {
+    caught = true;
+    CHECK(std::string(e.what()).find("custom form") != std::string::npos);
+  }
+  CHECK(caught);
+}
+
 auto test_preload_and_bind() -> void {
   t::section("preload and bind");
   luakit::Interpreter s;
@@ -134,9 +181,89 @@ auto test_script_bytecode() -> void {
   s.open_libs();
   const char *src = "bc = 'loaded'";
   s.script_bytecode(src, std::char_traits<char>::length(src), "@fake.lua");
-  core::getglobal(s.raw(), "bc");
-  CHECK_STR(s.get<std::string>(-1), "loaded");
-  core::pop(s.raw(), 1);
+  CHECK_STR(s.global<std::string>("bc"), "loaded");
+}
+
+// Hot reload: editing a plugin without restarting the host. The opener stands
+// in for a changing source file, since what matters is that the module is
+// really rebuilt rather than handed back from the cache.
+int open_count = 0;
+
+auto open_versioned(core::State *L) -> int {
+  ++open_count;
+  core::newtable(L);
+  core::pushinteger(L, open_count);
+  core::setfield(L, -2, "version");
+  return 1;
+}
+
+auto test_unload_and_reload() -> void {
+  t::section("a module can be unloaded and reloaded");
+  luakit::Interpreter s;
+  open_count = 0;
+  s.open_libs().preload({"plugin", open_versioned});
+
+  CHECK(!s.loaded("plugin"));
+
+  s.script("p = require('plugin')");
+  CHECK(s.loaded("plugin"));
+  CHECK_EQ(open_count, 1);
+
+  // require is cached, so a second one must not run the opener again.
+  s.script("assert(require('plugin') == p)");
+  CHECK_EQ(open_count, 1);
+
+  s.unload("plugin");
+  CHECK(!s.loaded("plugin"));
+  CHECK_EQ(open_count, 1);  // unloading alone does not re-run it
+
+  s.script("local fresh = require('plugin') assert(fresh.version == 2) assert(fresh ~= p)");
+  CHECK_EQ(open_count, 2);
+
+  // reload does both halves in one go.
+  s.reload("plugin");
+  CHECK_EQ(open_count, 3);
+  CHECK(s.loaded("plugin"));
+  s.script("assert(require('plugin').version == 3)");
+
+  // Unloading something that was never loaded is not an error.
+  s.unload("never_seen");
+}
+
+auto test_reload_failure_leaves_it_unloaded() -> void {
+  t::section("a module that fails to reload is left unloaded");
+  luakit::Interpreter s;
+  s.open_libs();
+  s.script("package.preload.broken = function() error('bad plugin') end");
+
+  bool caught = false;
+  try {
+    s.reload("broken");
+  } catch (const luakit::Error &e) {
+    caught = true;
+    CHECK(std::string(e.what()).find("bad plugin") != std::string::npos);
+  }
+  CHECK(caught);
+  CHECK(!s.loaded("broken"));
+
+  // The interpreter is still usable, and the failed require left nothing.
+  CHECK_EQ(core::gettop(s.raw()), 0);
+  s.script("after = 1");
+  CHECK_EQ(s.global<int>("after"), 1);
+}
+
+auto test_reload_needs_the_libraries() -> void {
+  t::section("reload says so when require is missing");
+  luakit::Interpreter s;  // deliberately no open_libs
+
+  bool caught = false;
+  try {
+    s.reload("anything");
+  } catch (const luakit::Error &e) {
+    caught = true;
+    CHECK(std::string(e.what()).find("open_libs") != std::string::npos);
+  }
+  CHECK(caught);
 }
 
 }  // namespace
@@ -145,7 +272,12 @@ auto main() -> int {
   test_lifecycle();
   test_move();
   test_errors_are_exceptions();
+  test_runtime_error_has_a_traceback();
+  test_non_string_error_object();
   test_preload_and_bind();
   test_script_bytecode();
+  test_unload_and_reload();
+  test_reload_failure_leaves_it_unloaded();
+  test_reload_needs_the_libraries();
   return t::summary();
 }

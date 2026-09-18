@@ -8,6 +8,7 @@
 #include "check.hpp"
 
 #include "luakit/coroutine.hpp"
+#include "luakit/function.hpp"
 
 #include <string>
 #include <utility>
@@ -19,6 +20,31 @@ namespace {
 using luakit::Coroutine;
 using luakit::Error;
 using luakit::Interpreter;
+
+// The scheduler side of a yielding function: sleep() records what it was asked
+// for and suspends; the host resumes it when the time has passed.
+double slept_for = 0;
+int sleep_calls = 0;
+
+auto sleep_for(double seconds) -> double {
+  slept_for += seconds;
+  ++sleep_calls;
+  return seconds;  // yielded to whoever is driving, so it knows how long to wait
+}
+
+auto pause_here() -> void {
+}
+
+const core::aux::Reg scheduler[] = {
+    {"sleep", luakit::yielding<sleep_for> },
+    {"pause", luakit::yielding<pause_here>},
+    {nullptr, nullptr                     },
+};
+
+auto open_scheduler(core::State *L) -> int {
+  core::aux::newlib(L, scheduler);
+  return 1;
+}
 
 // A fresh interpreter with a few coroutine bodies defined as globals.
 struct Host {
@@ -239,6 +265,85 @@ auto test_from_stack() -> void {
   core::pop(L, 1);
 }
 
+// A bound C++ function that suspends its caller. Without lua_yieldk a script
+// could only wait by yielding from Lua itself, which means the host cannot own
+// the scheduling.
+auto test_yielding_function() -> void {
+  t::section("a bound C++ function can yield");
+  Interpreter lua;
+  lua.open_libs().preload({"sched", open_scheduler});
+  slept_for = 0;
+  sleep_calls = 0;
+
+  lua.script(R"LUA(
+    local sched = require("sched")
+    log = {}
+    function task()
+      log[#log + 1] = "start"
+      local waited = sched.sleep(2)
+      log[#log + 1] = "woke after " .. tostring(waited)
+      sched.sleep(3)
+      log[#log + 1] = "done"
+    end
+  )LUA");
+
+  Coroutine co(lua, "task");
+
+  // Each resume runs until the next sleep, which yields the requested delay.
+  CHECK_EQ(co.resume<double>().value_or(-1), 2.0);
+  CHECK_EQ(sleep_calls, 1);
+
+  // Whatever the host passes back becomes the result of the sleep() call.
+  CHECK_EQ(co.resume<double>(2.0).value_or(-1), 3.0);
+  CHECK_EQ(sleep_calls, 2);
+
+  CHECK(!co.resume<double>(3.0).has_value());  // ran to completion
+  CHECK(co.done());
+  CHECK_EQ(slept_for, 5.0);
+
+  lua.script(R"LUA(
+    assert(#log == 3, #log)
+    assert(log[1] == "start", log[1])
+    assert(log[2] == "woke after 2.0", log[2])
+    assert(log[3] == "done", log[3])
+  )LUA");
+}
+
+// One that yields nothing still suspends, and still resumes cleanly.
+auto test_yielding_without_a_value() -> void {
+  t::section("a yielding function with no return value");
+  Interpreter lua;
+  lua.open_libs().preload({"sched", open_scheduler});
+
+  lua.script(R"LUA(
+    local sched = require("sched")
+    function twostep()
+      step = 1
+      sched.pause()
+      step = 2
+    end
+  )LUA");
+
+  Coroutine co(lua, "twostep");
+  CHECK(co.resume());  // suspended
+  CHECK_EQ(lua.global<int>("step"), 1);
+  CHECK(!co.resume());  // finished
+  CHECK_EQ(lua.global<int>("step"), 2);
+}
+
+auto test_yielding_outside_a_coroutine() -> void {
+  t::section("yielding outside a coroutine is refused");
+  Interpreter lua;
+  lua.open_libs().preload({"sched", open_scheduler});
+
+  lua.script(R"LUA(
+    local sched = require("sched")
+    local ok, err = pcall(sched.sleep, 1)
+    assert(not ok)
+    assert(err:find("inside a coroutine"), err)
+  )LUA");
+}
+
 }  // namespace
 
 auto main() -> int {
@@ -254,5 +359,8 @@ auto main() -> int {
   test_no_registry_leak();
   test_move_semantics();
   test_from_stack();
+  test_yielding_function();
+  test_yielding_without_a_value();
+  test_yielding_outside_a_coroutine();
   return t::summary();
 }

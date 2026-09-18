@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include <exception>
 #include <string>
 
 namespace t {
@@ -45,9 +46,28 @@ auto report_str(const A &a, const B &b, const char *what) -> void {
   report(ok, what, ok ? std::string() : "got '" + lhs + "', want '" + rhs + "'");
 }
 
+// Runs something that should not throw, and reports it either way.
+//
+// A suite that leans on Lua's own assert() would otherwise let a failure
+// escape as an uncaught luakit::Error and take the process down before the
+// summary printed. This keeps the message and counts the check.
+template <typename F>
+auto report_ok(F &&run, const char *what) -> void {
+  try {
+    run();
+  } catch (const std::exception &e) {
+    report(false, what, e.what());
+    return;
+  }
+  report(true, what, "");
+}
+
 #define CHECK(cond) ::t::report((cond), #cond, "")
 #define CHECK_EQ(a, b) ::t::report_eq((a), (b), #a " == " #b)
 #define CHECK_STR(a, b) ::t::report_str((a), (b), #a " == " #b)
+
+// For a chunk whose assertions are written in Lua.
+#define CHECK_OK(expr) ::t::report_ok([&] { expr; }, #expr)
 
 inline auto section(const char *name) -> void {
   std::printf("%s\n", name);

@@ -69,6 +69,13 @@ endif()
 option(LUNA_STRIP_DEBUG "Strip debug info from embedded bytecode"
        ${LUNA_STRIP_DEBUG_DEFAULT})
 
+# luakit_embed_script takes STRIP as a presence flag, not a boolean.
+if(LUNA_STRIP_DEBUG)
+  set(LUNA_STRIP_DEBUG_ARG STRIP)
+else()
+  set(LUNA_STRIP_DEBUG_ARG "")
+endif()
+
 if(LUNA_BUILD_DEMO)
   add_subdirectory(src)
 
