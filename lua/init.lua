@@ -22,7 +22,20 @@ printL(string.format("%s  #t = %d  mean = %.2f  max = %.1f", tostring(t), #t, t:
 local empty = tracker.new("empty")
 printL("empty mean -> " .. tostring(select(2, pcall(empty.mean, empty))))
 
--- Dropping the last reference makes the collector run ~Tracker
 empty = nil
--- collectgarbage()
--- printL("(collected)")
+
+function fibonacci(limit)
+    local a, b = 0, 1
+    while a <= limit do
+        coroutine.yield(a)
+        a, b = b, a + b
+    end
+end
+
+local gen = coroutine.wrap(fibonacci)
+local x = 50
+local n = gen(x)
+while n do
+    printL("Fibonacci: " .. n)
+    n = gen()
+end
