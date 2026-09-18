@@ -61,8 +61,13 @@ class Class {
     return *this;
   }
 
-  // A metamethod: "__tostring", "__len", "__eq" and friends. __index and
-  // __newindex are not available, since the field dispatch owns both.
+  // A metamethod: "__tostring", "__len", "__eq" and friends. These inherit
+  // like methods do, so a base's __tostring is what a derived class prints
+  // with unless it names its own.
+  //
+  // "__gc", "__index" and "__newindex" are not available. luakit sets all
+  // three last and they win over anything named here: the first destroys the
+  // object, and the other two are the field dispatch.
   template <auto M>
   auto meta(const char *name) -> Class & {
     meta_.push_back({name, luakit::method<M>});

@@ -139,8 +139,15 @@ template <> struct luakit::Metatable<Dog> {
 ```
 
 A `Dog` then satisfies a parameter of type `Animal *` or `Animal &`, with the
-pointer adjusted properly for a base at a non-zero offset. Members are copied
-down at registration, so a lookup costs the same however deep the hierarchy is.
+pointer adjusted properly for a base at a non-zero offset. Methods, fields and
+metamethods are all copied down at registration, so a base's `__tostring` is
+what a derived class prints with, and a lookup costs the same however deep the
+hierarchy is. A name the derived class defines itself wins.
+
+`__gc`, `__index` and `__newindex` are the exception: luakit owns all three and
+sets them last. A base's `__gc` on a derived class would check for the wrong
+metatable and never destroy anything, and the index pair is the field dispatch.
+
 Bases must be registered before the classes that inherit from them.
 
 ### Overloads

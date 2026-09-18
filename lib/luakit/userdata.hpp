@@ -4,6 +4,7 @@
 
 #include <concepts>
 #include <cstddef>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <type_traits>
@@ -171,6 +172,22 @@ inline auto getters_key() noexcept -> const void * {
 inline auto setters_key() noexcept -> const void * {
   static const char key = 0;
   return &key;
+}
+inline auto metamethods_key() noexcept -> const void * {
+  static const char key = 0;
+  return &key;
+}
+
+// Metamethods luakit owns, which a class may not supply and a derived class
+// must not inherit.
+//
+// __gc is the one that would actually break: a base's finalizer installed on a
+// derived class checks for the base's metatable, fails, and the object is
+// never destroyed. __index and __newindex are what the field dispatch needs to
+// do its job. (__name cannot reach here at all -- luaL_newmetatable sets it to
+// the type name, and a Reg array can only hold functions.)
+inline auto reserved_metamethod(const char *name) noexcept -> bool {
+  return std::strcmp(name, "__gc") == 0 || std::strcmp(name, "__index") == 0 || std::strcmp(name, "__newindex") == 0;
 }
 
 // Adjusts a pointer from Derived to Base. The compiler does the work, so a
@@ -395,60 +412,77 @@ struct Userdata {
     return 0;
   }
 
-  // Builds the metatable: __gc, whatever metamethods `meta` names, and the
-  // __index / __newindex pair that dispatches methods, properties and
-  // per-instance state.
+  // Builds the metatable: the metamethods `meta` names, whatever the bases
+  // contribute, and the __gc / __index / __newindex trio luakit owns.
   //
-  // An __index or __newindex supplied in `meta` is overwritten. The dispatch
-  // here has to own both to do its job, and a class needing something else
-  // entirely is better off setting the metatable up by hand.
+  // Metamethods inherit alongside methods, so a __tostring on a base is what a
+  // derived class prints with. The three reserved names are the exception:
+  // they are set last here and win over anything supplied or inherited, since
+  // a base's __gc on a derived class would fail its own type check and the
+  // field dispatch needs both index metamethods to work at all.
   static auto register_class(core::State *L, const core::aux::Reg *methods, const core::aux::Reg *meta = nullptr,
                              const PropertyReg *props = nullptr) -> void {
     core::aux::newmetatable(L, Metatable<T>::k_name);
     const int mt = core::gettop(L);
 
-    core::pushcfunction(L, gc);
-    core::setfield(L, mt, "__gc");
-    if (meta) core::aux::setfuncs(L, meta, 0);
-
-    core::aux::newlib(L, methods);
-    const int method_table = core::gettop(L);
-
+    // A null methods array is allowed, like a null meta or props: a class can
+    // exist purely to be inherited from, or carry nothing but fields.
+    if (methods) {
+      core::aux::newlib(L, methods);
+    } else {
+      core::newtable(L);
+    }
     core::newtable(L);
-    const int getters = core::gettop(L);
     core::newtable(L);
-    const int setters = core::gettop(L);
+    core::newtable(L);
+
+    const Tables own{mt + 1, mt + 2, mt + 3, mt + 4};
 
     for (const PropertyReg *p = props; p && p->name; ++p) {
       if (p->get) {
         core::pushcfunction(L, p->get);
-        core::setfield(L, getters, p->name);
+        core::setfield(L, own.getters, p->name);
       }
       if (p->set) {
         core::pushcfunction(L, p->set);
-        core::setfield(L, setters, p->name);
+        core::setfield(L, own.setters, p->name);
       }
     }
 
-    inherit_from_bases(L, method_table, getters, setters);
+    for (const core::aux::Reg *m = meta; m && m->name; ++m) {
+      if (detail::reserved_metamethod(m->name)) continue;
+      core::pushcfunction(L, m->func);
+      core::setfield(L, own.metamethods, m->name);
+    }
+
+    inherit_from_bases(L, own);
     record_casts(L, mt);
 
     // Kept so a class deriving from this one can copy them down. Under light
     // userdata keys, which nothing written from Lua can collide with.
-    core::pushvalue(L, method_table);
+    core::pushvalue(L, own.methods);
     core::rawsetp(L, mt, detail::methods_key());
-    core::pushvalue(L, getters);
+    core::pushvalue(L, own.getters);
     core::rawsetp(L, mt, detail::getters_key());
-    core::pushvalue(L, setters);
+    core::pushvalue(L, own.setters);
     core::rawsetp(L, mt, detail::setters_key());
+    core::pushvalue(L, own.metamethods);
+    core::rawsetp(L, mt, detail::metamethods_key());
 
-    core::pushvalue(L, method_table);
-    core::pushvalue(L, getters);
+    // Unconditional, so re-registering a class -- which is what hot reload
+    // does -- really does replace what was there before.
+    copy_all(L, mt, own.metamethods);
+
+    core::pushcfunction(L, gc);
+    core::setfield(L, mt, "__gc");
+
+    core::pushvalue(L, own.methods);
+    core::pushvalue(L, own.getters);
     core::pushcclosure(L, index_dispatch, 2);
     core::setfield(L, mt, "__index");
 
-    core::pushvalue(L, setters);
-    core::pushvalue(L, getters);
+    core::pushvalue(L, own.setters);
+    core::pushvalue(L, own.getters);
     core::pushcclosure(L, newindex_dispatch, 2);
     core::setfield(L, mt, "__newindex");
 
@@ -466,6 +500,25 @@ struct Userdata {
   //
   // The cost is that adding a method to a base after the fact does not reach
   // classes already registered. Nothing does that.
+
+  // The four tables a class is assembled from, by stack index.
+  struct Tables {
+    int methods;
+    int getters;
+    int setters;
+    int metamethods;
+  };
+
+  // Copies every entry of src into dst, overwriting what is there.
+  static auto copy_all(core::State *L, int dst, int src) -> void {
+    core::pushnil(L);
+    while (core::next(L, src)) {  // [key, value]
+      core::pushvalue(L, -2);
+      core::pushvalue(L, -2);
+      core::rawset(L, dst);
+      core::pop(L, 1);  // [key]
+    }
+  }
 
   // Copies anything from base `src` that `dst` does not already define.
   static auto merge_missing(core::State *L, int dst, int src) -> void {
@@ -498,14 +551,15 @@ struct Userdata {
   }
 
   template <typename B>
-  static auto merge_one_base(core::State *L, int method_table, int getters, int setters) -> void {
+  static auto merge_one_base(core::State *L, const Tables &own) -> void {
     const struct {
       int dst;
       const void *key;
     } slots[] = {
-        {method_table, detail::methods_key()},
-        {getters,      detail::getters_key()},
-        {setters,      detail::setters_key()},
+        {own.methods,     detail::methods_key()    },
+        {own.getters,     detail::getters_key()    },
+        {own.setters,     detail::setters_key()    },
+        {own.metamethods, detail::metamethods_key()},
     };
 
     for (const auto &slot : slots) {
@@ -517,14 +571,13 @@ struct Userdata {
 
   // maybe_unused because a class with no bases expands this fold to nothing.
   template <typename... Bs>
-  static auto merge_bases([[maybe_unused]] core::State *L, [[maybe_unused]] int method_table,
-                          [[maybe_unused]] int getters, [[maybe_unused]] int setters, Bases<Bs...> *) -> void {
-    (merge_one_base<Bs>(L, method_table, getters, setters), ...);
+  static auto merge_bases([[maybe_unused]] core::State *L, [[maybe_unused]] const Tables &own, Bases<Bs...> *) -> void {
+    (merge_one_base<Bs>(L, own), ...);
   }
 
-  static auto inherit_from_bases(core::State *L, int method_table, int getters, int setters) -> void {
+  static auto inherit_from_bases(core::State *L, const Tables &own) -> void {
     using bases = typename detail::all_bases<T>::type;
-    merge_bases(L, method_table, getters, setters, static_cast<bases *>(nullptr));
+    merge_bases(L, own, static_cast<bases *>(nullptr));
   }
 
   // Records how to turn a T* into each of its base pointers, so a Derived can

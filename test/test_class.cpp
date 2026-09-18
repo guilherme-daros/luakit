@@ -14,9 +14,12 @@ namespace {
 
 // A small hierarchy, plus a second base so the multiple-inheritance pointer
 // adjustment is actually exercised rather than assumed.
+int dog_dtors = 0;
+
 struct Named {
   std::string name = "unnamed";
   auto label() const -> std::string { return name; }
+  auto describe() const -> std::string { return "named(" + name + ")"; }
 };
 
 struct Ticking {
@@ -34,11 +37,14 @@ struct Animal : Named {
 };
 
 struct Dog : Animal {
+  ~Dog() { ++dog_dtors; }
   auto speak() const -> std::string { return name + " says woof"; }
 };
 
 struct Robot : Named, Ticking {
   auto speak() const -> std::string { return name + " says beep"; }
+  // Shadows the one inherited from Named, to check the nearer wins.
+  auto describe_self() const -> std::string { return "robot(" + name + ")"; }
 };
 
 // Free functions taking a base, to be called with a derived.
@@ -111,7 +117,11 @@ namespace {
 // Registration order matters: a base has to be in place before the classes
 // that inherit from it copy its members down.
 auto open_world(core::State *L) -> int {
-  luakit::Class<Named>(L).method<&Named::label>("label").prop<&Named::name>("name").build();
+  luakit::Class<Named>(L)
+      .method<&Named::label>("label")
+      .prop<&Named::name>("name")
+      .meta<&Named::describe>("__tostring")
+      .build();
 
   luakit::Class<Ticking>(L).method<&Ticking::tick>("tick").accessor<&Ticking::tick_count>("ticks").build();
 
@@ -127,7 +137,7 @@ auto open_world(core::State *L) -> int {
 }
 
 auto open_more(core::State *L) -> int {
-  luakit::Class<Robot>(L).method<&Robot::speak>("speak").build();
+  luakit::Class<Robot>(L).method<&Robot::speak>("speak").meta<&Robot::describe_self>("__tostring").build();
 
   // An overloaded member needs its signature spelled out, because the name
   // alone does not pick one. Nothing luakit can do about that.
@@ -321,6 +331,109 @@ auto test_identity_across_the_hierarchy() -> void {
   )LUA"));
 }
 
+// Metamethods come down with everything else, or a __tostring on a base would
+// leave derived objects printing their address and nothing would say why.
+auto test_metamethods_inherit() -> void {
+  t::section("a base's metamethods reach the derived class");
+  Host h;
+  CHECK_OK(h.lua.script(R"LUA(
+    local d = w.dog()
+    d.name = "rex"
+
+    -- Named is two levels up from Dog.
+    assert(tostring(d) == "named(rex)", tostring(d))
+
+    -- and the default userdata rendering is what it would be without this
+    assert(not tostring(d):find("^test%.Dog: "), tostring(d))
+  )LUA"));
+}
+
+auto test_derived_metamethod_wins() -> void {
+  t::section("a derived class overrides an inherited metamethod");
+  Host h;
+  CHECK_OK(h.lua.script(R"LUA(
+    local r = n.robot()
+    r.name = "bender"
+    assert(tostring(r) == "robot(bender)", tostring(r))
+  )LUA"));
+}
+
+// __gc is the reserved one that would actually break. A base's finalizer
+// installed on a derived class checks for the base's metatable, fails, and the
+// object is never destroyed.
+auto test_gc_is_not_inherited() -> void {
+  t::section("the collector still finalizes a derived class");
+  dog_dtors = 0;
+  {
+    Host h;
+    CHECK_OK(h.lua.script("for i = 1, 10 do local d = w.dog() d.name = 'x' end"));
+    CHECK_OK(h.lua.script("collectgarbage('collect') collectgarbage('collect')"));
+    CHECK_EQ(dog_dtors, 10);
+  }
+  CHECK_EQ(dog_dtors, 10);
+}
+
+// The three reserved names are luakit's whatever a class asks for, since a
+// supplied __gc would displace the one that destroys the object.
+auto test_reserved_metamethods_cannot_be_replaced() -> void {
+  t::section("a class cannot take over __gc or the index pair");
+  dog_dtors = 0;
+  {
+    luakit::Interpreter lua;
+    lua.open_libs();
+
+    static bool intruder_ran = false;
+    const core::aux::Reg meta[] = {
+        {"__gc",
+         [](core::State *) {
+           intruder_ran = true;
+           return 0;
+         }                    },
+        {"__index",
+         [](core::State *) {
+           intruder_ran = true;
+           return 0;
+         }                    },
+        {"__newindex",
+         [](core::State *) {
+           intruder_ran = true;
+           return 0;
+         }                    },
+        {nullptr,      nullptr},
+    };
+    const core::aux::Reg methods[] = {
+        {"speak", luakit::method<&Dog::speak>},
+        {nullptr, nullptr                    },
+    };
+    // static, so the captureless opener below can name it.
+    static const core::aux::Reg mod[] = {
+        {"dog",   luakit::ctor<Dog>},
+        {nullptr, nullptr          },
+    };
+
+    luakit::Userdata<Named>::register_class(lua.raw(), nullptr);
+    luakit::Userdata<Animal>::register_class(lua.raw(), nullptr);
+    luakit::Userdata<Dog>::register_class(lua.raw(), methods, meta);
+
+    lua.preload({"m", [](core::State *L) {
+                   core::aux::newlib(L, mod);
+                   return 1;
+                 }});
+
+    CHECK_OK(lua.script(R"LUA(
+      local m = require("m")
+      local d = m.dog()
+      assert(d:speak() == "unnamed says woof")   -- __index still dispatches
+      d.stashed = 1                              -- __newindex still stores
+      assert(d.stashed == 1)
+    )LUA"));
+    CHECK_OK(lua.script("collectgarbage('collect') collectgarbage('collect')"));
+
+    CHECK(!intruder_ran);
+  }
+  CHECK_EQ(dog_dtors, 1);  // luakit's __gc ran, so the Dog was destroyed
+}
+
 }  // namespace
 
 auto main() -> int {
@@ -334,5 +447,9 @@ auto main() -> int {
   test_builder_produces_the_same_thing();
   test_override_wins();
   test_identity_across_the_hierarchy();
+  test_metamethods_inherit();
+  test_derived_metamethod_wins();
+  test_gc_is_not_inherited();
+  test_reserved_metamethods_cannot_be_replaced();
   return t::summary();
 }
