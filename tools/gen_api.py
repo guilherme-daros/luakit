@@ -75,7 +75,7 @@ def compiles(body: str, inc: str) -> tuple[bool, set[int]]:
         f.write(src)
         tmp = f.name
     proc = subprocess.run(
-        ["g++", "-std=c++17", "-fsyntax-only", f"-I{inc}", tmp],
+        ["g++", "-std=c++20", "-fsyntax-only", f"-I{inc}", tmp],
         capture_output=True, text=True,
     )
     pathlib.Path(tmp).unlink()

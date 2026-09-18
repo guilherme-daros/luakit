@@ -2,13 +2,37 @@
 
 #include "luakit/core/api.hpp"
 
+#include <concepts>
 #include <new>
+#include <type_traits>
 #include <utility>
 
 namespace luakit {
 
+// The name Lua knows T by. Every class exposed as userdata specializes this:
+//
+//   template <> struct luakit::Metatable<Widget> {
+//     static constexpr const char *k_name = "app.Widget";
+//   };
 template <typename T>
 struct Metatable;
+
+// What a usable specialization has to provide. This cannot be a constraint on
+// the declaration above: a constraint there would have to name Metatable<T>,
+// which is the very name being declared. So the requirement is stated here
+// and enforced where a metatable is consumed -- Userdata<T> below, and the
+// Stack<T *> / Stack<T &> specializations.
+//
+// Anything that converts to const char * is accepted, so `static constexpr
+// char k_name[]` works as well as a pointer. The second requirement is not
+// redundant: Stack<T>::name copies k_name into a constexpr member, so a
+// k_name that is merely const would satisfy the conversion here and then fail
+// much later, and much less legibly, as "not usable in a constant expression".
+template <typename T>
+concept Registered = requires {
+  { Metatable<T>::k_name } -> std::convertible_to<const char *>;
+  typename std::bool_constant<Metatable<T>::k_name != nullptr>;
+};
 
 // core::newuserdatauv returns storage the collector already tracks, before the
 // constructor has run. `live` lets __gc tell a built object from raw memory,
@@ -21,8 +45,19 @@ struct Box {
   auto obj() noexcept -> T * { return reinterpret_cast<T *>(storage); }
 };
 
+// Checked with static_assert rather than a requires-clause on the template.
+// Constraining Userdata<T> would make the class vanish when T is unregistered,
+// and every use of it downstream then fails on its own, burying the one error
+// that matters under a page of unrelated ones.
 template <typename T>
 struct Userdata {
+  static_assert(Registered<T>,
+                "luakit: Metatable<T> must declare k_name as `static constexpr const char *`. "
+                "Write, at namespace scope:\n"
+                "  template <> struct luakit::Metatable<YourType> {\n"
+                "    static constexpr const char *k_name = \"your.Name\";\n"
+                "  };");
+
   using box_type = Box<T>;
 
   // Pushes GC-managed storage with the metatable attached, marked not-yet-

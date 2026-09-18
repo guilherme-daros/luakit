@@ -21,6 +21,7 @@ struct signature<R (*)(A...)> {
   using ret = R;
   using args = std::tuple<A...>;
 };
+
 template <typename R, typename... A>
 struct signature<R (*)(A...) noexcept> : signature<R (*)(A...)> {};
 
@@ -30,10 +31,13 @@ struct signature<R (C::*)(A...)> {
   using cls = C;
   using args = std::tuple<A...>;
 };
+
 template <typename R, typename C, typename... A>
 struct signature<R (C::*)(A...) const> : signature<R (C::*)(A...)> {};
+
 template <typename R, typename C, typename... A>
 struct signature<R (C::*)(A...) noexcept> : signature<R (C::*)(A...)> {};
+
 template <typename R, typename C, typename... A>
 struct signature<R (C::*)(A...) const noexcept> : signature<R (C::*)(A...)> {};
 
@@ -42,7 +46,7 @@ struct signature<R (C::*)(A...) const noexcept> : signature<R (C::*)(A...)> {};
 // so `const std::string &` and `std::string` share one specialization.
 template <typename T>
 using stack_key_t =
-    std::conditional_t<std::is_lvalue_reference_v<T> && has_metatable_v<std::remove_cv_t<std::remove_reference_t<T>>>,
+    std::conditional_t<std::is_lvalue_reference_v<T> && Registered<std::remove_cv_t<std::remove_reference_t<T>>>,
                        std::remove_cv_t<std::remove_reference_t<T>> &, std::decay_t<T>>;
 
 template <typename>

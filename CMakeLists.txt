@@ -15,10 +15,10 @@ if(PROJECT_IS_TOP_LEVEL)
   # project: forcing this on a parent build would be rude.
   set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-  # Turning extensions off is what makes CMake actually emit the standard:
-  # GCC already defaults to gnu++17, so without this the flag never reaches
-  # compile_commands.json and clangd falls back to its own default.
-  set(CMAKE_CXX_STANDARD 17)
+  # Extensions off so the flag is -std=c++20 rather than -std=gnu++20: the
+  # library is meant to build as ISO C++, and this is also what lands in
+  # compile_commands.json for clangd to read.
+  set(CMAKE_CXX_STANDARD 20)
   set(CMAKE_CXX_STANDARD_REQUIRED ON)
   set(CMAKE_CXX_EXTENSIONS OFF)
 endif()

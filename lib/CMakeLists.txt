@@ -1,4 +1,4 @@
-# luakit -- header-only C++17 bindings for Lua 5.4.
+# luakit -- header-only C++20 bindings for Lua 5.4.
 #
 # Self-contained: this directory can be dropped into another project and used
 # with add_subdirectory(luakit), pulled in with FetchContent, or installed and
@@ -24,7 +24,7 @@ find_package(Lua54 REQUIRED)
 add_library(luakit INTERFACE)
 add_library(luakit::luakit ALIAS luakit)
 
-target_compile_features(luakit INTERFACE cxx_std_17)
+target_compile_features(luakit INTERFACE cxx_std_20)
 target_link_libraries(luakit INTERFACE Lua54::Lua54)
 
 # The include root is this directory, so headers are reached as

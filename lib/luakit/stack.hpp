@@ -17,13 +17,6 @@ namespace luakit {
 namespace detail {
 template <typename>
 inline constexpr bool always_false = false;
-
-template <typename T, typename = void>
-struct has_metatable : std::false_type {};
-template <typename T>
-struct has_metatable<T, std::void_t<decltype(Metatable<T>::k_name)>> : std::true_type {};
-template <typename T>
-inline constexpr bool has_metatable_v = has_metatable<T>::value;
 }  // namespace detail
 
 // Transfers a C++ value to and from the Lua stack. Specialize for new types.
@@ -43,7 +36,12 @@ inline constexpr bool has_metatable_v = has_metatable<T>::value;
 // so containers can validate elements and still report which element failed.
 template <typename T, typename = void>
 struct Stack {
-  static_assert(detail::always_false<T>, "luakit: no Stack<T> specialization for this type");
+  // A class type reaches here when it has no Metatable<T>, which is a far more
+  // common mistake than a genuinely unhandled type, so the message names both.
+  static_assert(detail::always_false<T>,
+                "luakit: no Stack<T> specialization for this type. A class passed to or from Lua "
+                "needs a Metatable<T> declaring `static constexpr const char *k_name`; anything "
+                "else needs its own Stack<T>.");
 };
 
 template <typename T>
@@ -235,7 +233,7 @@ struct Stack<std::vector<T>> {
 // Userdata<T>::emplace, so there is no push here: pushing a bare T* would have
 // no way to know whether Lua already owns that object.
 template <typename T>
-struct Stack<T *, std::enable_if_t<detail::has_metatable_v<T>>> {
+struct Stack<T *, std::enable_if_t<Registered<T>>> {
   static constexpr const char *name = Metatable<T>::k_name;
   static auto test(core::State *L, int idx) noexcept -> bool {
     return core::aux::testudata(L, idx, Metatable<T>::k_name) != nullptr;
@@ -247,7 +245,7 @@ struct Stack<T *, std::enable_if_t<detail::has_metatable_v<T>>> {
 };
 
 template <typename T>
-struct Stack<T &, std::enable_if_t<detail::has_metatable_v<T>>> {
+struct Stack<T &, std::enable_if_t<Registered<T>>> {
   static constexpr const char *name = Metatable<T>::k_name;
   static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
   static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
