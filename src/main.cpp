@@ -13,11 +13,9 @@ auto main(int argc, char **argv) -> int try {
 
   auto interpreter = luakit::Interpreter();
 
-  // preload must follow open_libs, which is what creates `package`. Nothing
-  // is loaded until init.lua requires it.
   interpreter.open_libs();
-  interpreter.preload("luna", luaopen_luna);
-  interpreter.preload("tracker", luaopen_tracker);
+  interpreter.preload(mod::luna());
+  interpreter.preload(mod::tracker());
 
   interpreter.script_file("lua/init.lua");
 

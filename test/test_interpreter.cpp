@@ -113,7 +113,7 @@ auto test_errors_are_exceptions() -> void {
 auto test_preload_and_bind() -> void {
   t::section("preload and bind");
   luakit::Interpreter s;
-  s.open_libs().bind<Widget>(widget_methods).preload("mod", open_mod);
+  s.open_libs().bind<Widget>(widget_methods).preload({"mod", open_mod});
 
   // Not loaded until required.
   s.script("assert(package.loaded.mod == nil)");

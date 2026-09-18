@@ -1,6 +1,7 @@
 #pragma once
 
 #include "luakit/core/api.hpp"
+#include "luakit/module.hpp"
 #include "luakit/stack.hpp"
 #include "luakit/userdata.hpp"
 
@@ -55,10 +56,10 @@ class Interpreter {
 
   // Advertise a module to require without loading it. Must follow open_libs,
   // which is what creates `package`.
-  auto preload(const char *name, core::CFunction openf) -> Interpreter & {
+  auto preload(Module lib) -> Interpreter & {
     core::aux::getsubtable(L_, core::REGISTRYINDEX, core::PRELOAD_TABLE);
-    core::pushcfunction(L_, openf);
-    core::setfield(L_, -2, name);
+    core::pushcfunction(L_, lib.open);
+    core::setfield(L_, -2, lib.name);
     core::pop(L_, 1);
     return *this;
   }
