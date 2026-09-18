@@ -10,3 +10,6 @@ cmake-build-*/
 
 # Symlink into the build tree, created at CMake configure time
 /compile_commands.json
+
+# clangd's local index
+/.cache/
