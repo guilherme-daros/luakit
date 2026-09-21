@@ -63,9 +63,13 @@ install(
   DESTINATION "${LUAKIT_CMAKE_DIR}")
 
 # FindLua54 so the generated config can resolve Lua on the consumer's machine,
-# and luakit-embed so an installed luakit still offers luakit_embed_script.
+# luakit-embed so an installed luakit still offers luakit_embed_script/_dir,
+# and embedded_stub.hpp.in alongside it -- installed, it is no longer a
+# sibling of lib/cmake/ the way it is in-tree, since headers move under
+# <prefix>/include instead of staying under <prefix>/lib/luakit.
 install(FILES "${CMAKE_CURRENT_LIST_DIR}/cmake/FindLua54.cmake"
               "${CMAKE_CURRENT_LIST_DIR}/cmake/luakit-embed.cmake"
+              "${CMAKE_CURRENT_LIST_DIR}/luakit/embedded_stub.hpp.in"
         DESTINATION "${LUAKIT_CMAKE_DIR}")
 
 configure_package_config_file(

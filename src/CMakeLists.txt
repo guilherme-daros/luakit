@@ -1,6 +1,6 @@
-# The demo host. LUNA_EMBED decides how lua/init.lua gets in: "bytecode" and
-# "source" bake it into the executable through luakit_embed_script, "file"
-# reads it from disk at startup. The top-level CMakeLists derives the default
+# The demo host. LUNA_EMBED decides how lua/ gets in: "bytecode" and "source"
+# bake the scripts into the executable through luakit_embed_dir, "file" reads
+# them from disk at startup. The top-level CMakeLists derives the default
 # from the build type.
 
 if(NOT LUNA_EMBED MATCHES "^(bytecode|source|file)$")
@@ -8,10 +8,7 @@ if(NOT LUNA_EMBED MATCHES "^(bytecode|source|file)$")
           "LUNA_EMBED must be bytecode, source or file (got '${LUNA_EMBED}')")
 endif()
 
-message(STATUS "luna: lua/init.lua embedding is '${LUNA_EMBED}'")
-
-set(LUNA_LUA_SRC "${CMAKE_SOURCE_DIR}/lua/init.lua")
-set(LUNA_LUA_EXAMPLES "${CMAKE_SOURCE_DIR}/lua/examples.lua")
+message(STATUS "luna: lua/ embedding is '${LUNA_EMBED}'")
 
 # Each Lua module exposed to scripts lives in packages/. main.cpp is the host
 # that registers them.
@@ -23,7 +20,7 @@ set(LUNA_PACKAGES
     packages/world/entity.cpp
     packages/world/creature.cpp)
 
-add_executable(luna_demo main.cpp ${LUNA_PACKAGES})
+add_executable(luna_demo main.cpp demo.cpp ${LUNA_PACKAGES})
 
 set_target_properties(luna_demo PROPERTIES OUTPUT_NAME main)
 
@@ -33,28 +30,17 @@ target_include_directories(luna_demo PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_link_libraries(luna_demo PRIVATE luakit::luakit)
 
-if(LUNA_EMBED STREQUAL "file")
-  # Absolute paths, so the binary can be run from any directory. They also tie
-  # the executable to this machine's layout, which is the other half of why a
-  # release build embeds instead.
-  target_compile_definitions(
-    luna_demo PRIVATE LUNA_SCRIPT_PATH="${LUNA_LUA_SRC}"
-                      LUNA_EXAMPLES_PATH="${LUNA_LUA_EXAMPLES}")
-else()
-  # Two scripts, so the mod ships as more than one file and still needs no
-  # filesystem at run time. Each defines <name>[] and <name>_len in "<name>.h",
-  # plus the macro LUAKIT_EMBEDDED_<NAME> that main.cpp switches on.
-  luakit_embed_script(
-    TARGET luna_demo
-    SCRIPT "${LUNA_LUA_SRC}"
-    NAME init_lua
-    MODE "${LUNA_EMBED}"
-    ${LUNA_STRIP_DEBUG_ARG})
-
-  luakit_embed_script(
-    TARGET luna_demo
-    SCRIPT "${LUNA_LUA_EXAMPLES}"
-    NAME examples_lua
-    MODE "${LUNA_EMBED}"
-    ${LUNA_STRIP_DEBUG_ARG})
-endif()
+# Every *.lua under lua/ becomes an entry in luakit::file::script(path), path
+# being relative to CMAKE_SOURCE_DIR (e.g. "lua/init.lua"). demo.cpp looks
+# scripts up by that name; it does not know or care which LUNA_EMBED mode
+# produced them. STUB_DIR is what keeps src/lsp_stub/file_scripts.hpp
+# (checked into git) in sync, so an LSP has something to resolve
+# luakit::file::script() against before the project has been configured even
+# once.
+luakit_embed_dir(
+  TARGET luna_demo
+  SOURCE_DIR "${CMAKE_SOURCE_DIR}/lua"
+  NAMESPACE file
+  MODE "${LUNA_EMBED}"
+  STUB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lsp_stub"
+  ${LUNA_STRIP_DEBUG_ARG})

@@ -98,3 +98,135 @@ function(luakit_embed_script)
   string(TOUPPER "${LES_NAME}" upper_name)
   target_compile_definitions(${LES_TARGET} PRIVATE "LUAKIT_EMBEDDED_${upper_name}")
 endfunction()
+
+# luakit_embed_dir -- the same idea, for every .lua script in a directory,
+# behind one generated lookup table instead of one macro per script.
+#
+#   luakit_embed_dir(
+#     TARGET      my_game
+#     SOURCE_DIR  "${CMAKE_SOURCE_DIR}/lua"
+#     NAMESPACE   file            # generates `namespace file { ... }`
+#     MODE        bytecode        # bytecode, source or file
+#     STRIP                       # bytecode only: drop line numbers and locals
+#     STUB_DIR    "${CMAKE_CURRENT_SOURCE_DIR}/lsp_stub"  # optional
+#   )
+#
+# Generates, on the target, an include directory holding
+# "<namespace>_scripts.hpp", which declares:
+#
+#   namespace luakit {
+#   namespace <namespace> {
+#     auto script(std::string_view path) -> Script;
+#   }
+#   }
+#
+# so a caller reaches it as luakit::<namespace>::script(path) -- nested under
+# luakit, since this is luakit's own naming convention for it, not a name the
+# consumer picked. `path` is a script's path relative to CMAKE_SOURCE_DIR,
+# e.g. "lua/init.lua" for "${CMAKE_SOURCE_DIR}/lua/init.lua". In
+# bytecode/source mode this calls luakit_embed_script per file and the
+# returned Script is backed by the embedded bytes; in file mode it is backed
+# by that file's absolute path instead, read at runtime. Either way the
+# shape is chosen once, by CMake, at configure time -- no macro appears in
+# the generated header or in whatever calls script().
+#
+# STUB_DIR, if given, also configures lib/luakit/embedded_stub.hpp.in (a real
+# file that ships with luakit, not text built up inline here) into a checked-
+# in placeholder "<namespace>_scripts.hpp" under that directory -- one entry
+# whose path can never match a real one, so find_script() throws for every
+# path -- and adds that directory to the target with -idirafter, which
+# GCC/Clang only fall back to once every ordinary -I path has come up empty.
+# The real generated header therefore always wins once it exists; the
+# placeholder is only ever seen by an editor's LSP before the project has
+# been configured, when the real one does not exist yet. Its content never
+# depends on which scripts exist, only on NAMESPACE, so it is safe to commit
+# and forget.
+function(luakit_embed_dir)
+  set(options STRIP)
+  set(one_value TARGET SOURCE_DIR NAMESPACE MODE STUB_DIR)
+  cmake_parse_arguments(LED "${options}" "${one_value}" "" ${ARGN})
+
+  if(NOT LED_TARGET)
+    message(FATAL_ERROR "luakit_embed_dir: TARGET is required")
+  endif()
+  if(NOT LED_SOURCE_DIR)
+    message(FATAL_ERROR "luakit_embed_dir: SOURCE_DIR is required")
+  endif()
+  if(NOT LED_NAMESPACE)
+    message(FATAL_ERROR "luakit_embed_dir: NAMESPACE is required")
+  endif()
+  if(NOT LED_MODE MATCHES "^(bytecode|source|file)$")
+    message(FATAL_ERROR
+            "luakit_embed_dir: MODE must be bytecode, source or file (got '${LED_MODE}')")
+  endif()
+
+  file(GLOB scripts CONFIGURE_DEPENDS "${LED_SOURCE_DIR}/*.lua")
+  list(SORT scripts)
+
+  set(gen_dir "${CMAKE_CURRENT_BINARY_DIR}/luakit-embed/${LED_TARGET}/${LED_NAMESPACE}")
+  set(header "${gen_dir}/${LED_NAMESPACE}_scripts.hpp")
+
+  set(includes "")
+  set(entries "")
+
+  foreach(script IN LISTS scripts)
+    file(RELATIVE_PATH key "${CMAKE_SOURCE_DIR}" "${script}")
+    get_filename_component(stem "${script}" NAME_WE)
+    string(MAKE_C_IDENTIFIER "${stem}_lua" name)
+
+    if(LED_MODE STREQUAL "file")
+      string(APPEND entries "    {\"${key}\", {\"@${key}\", nullptr, 0, \"${script}\"}},\n")
+    else()
+      set(strip_arg "")
+      if(LED_STRIP)
+        set(strip_arg STRIP)
+      endif()
+      luakit_embed_script(
+        TARGET "${LED_TARGET}"
+        SCRIPT "${script}"
+        NAME "${name}"
+        MODE "${LED_MODE}"
+        ${strip_arg})
+      string(APPEND includes "#include \"${name}.h\"\n")
+      string(APPEND entries "    {\"${key}\", {\"@${key}\", ${name}, ${name}_len}},\n")
+    endif()
+  endforeach()
+
+  set(content "#pragma once\n\n#include \"luakit/script.hpp\"\n\n")
+  string(APPEND content "${includes}\n")
+  string(APPEND content "namespace luakit {\nnamespace ${LED_NAMESPACE} {\n\n")
+  # xxd's generated arrays are plain (non-const) globals, so this table can't
+  # be constexpr when it references them -- const is enough either way, since
+  # find_script only ever reads it at runtime.
+  string(APPEND content "inline const NamedScript table[] = {\n")
+  string(APPEND content "${entries}")
+  string(APPEND content "};\n\n")
+  string(APPEND content
+         "inline auto script(std::string_view path) -> Script { return find_script(table, path); }\n\n")
+  string(APPEND content "}  // namespace ${LED_NAMESPACE}\n}  // namespace luakit\n")
+
+  file(WRITE "${header}" "${content}")
+
+  target_sources(${LED_TARGET} PRIVATE "${header}")
+  target_include_directories(${LED_TARGET} PRIVATE "${gen_dir}")
+
+  if(LED_STUB_DIR)
+    # The stub's actual content lives in lib/luakit/embedded_stub.hpp.in, a
+    # real file that ships with luakit -- @NAMESPACE@ is its only variable.
+    # In-tree, that is a sibling of lib/cmake/, where this file lives.
+    # Installed, headers move under <prefix>/include while this file stays
+    # under <prefix>/lib/cmake/luakit, so lib/CMakeLists.txt installs a copy
+    # of the template alongside it instead.
+    set(stub_template "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../luakit/embedded_stub.hpp.in")
+    if(NOT EXISTS "${stub_template}")
+      set(stub_template "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/embedded_stub.hpp.in")
+    endif()
+
+    set(NAMESPACE "${LED_NAMESPACE}")
+    configure_file("${stub_template}" "${LED_STUB_DIR}/${LED_NAMESPACE}_scripts.hpp" @ONLY)
+
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+      target_compile_options(${LED_TARGET} PRIVATE "-idirafter${LED_STUB_DIR}")
+    endif()
+  endif()
+endfunction()

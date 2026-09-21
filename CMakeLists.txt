@@ -31,36 +31,22 @@ if(NOT PROJECT_IS_TOP_LEVEL)
   return()
 endif()
 
-option(LUNA_BUILD_DEMO "Build the demo host" ON)
+option(LUNA_BUILD_DEMO  "Build the demo host" ON)
 option(LUNA_BUILD_TESTS "Build the luakit test suite" ON)
-option(LUNA_SANITIZE "Build tests with AddressSanitizer and UBSan" ON)
+option(LUNA_SANITIZE    "Build tests with AddressSanitizer and UBSan" ON)
 
-# How lua/init.lua reaches the interpreter.
-#
-# bytecode: precompile with luac and bake the bytes into the executable.
-# source:   bake the .lua text in and let liblua parse it at startup; slower
-#           to start, but immune to bytecode version skew across machines.
-# file:     read lua/init.lua from disk at startup, so editing a script means
-#           rerunning rather than rebuilding.
-#
-# A release build has to be self-contained, so it embeds; a debug build
-# favours the edit-run loop. An empty CMAKE_BUILD_TYPE is an unoptimised
-# build, so it counts as a debug one. Multi-config generators cannot answer
-# this at configure time and need -DLUNA_EMBED= to be passed explicitly.
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "")
-  set(LUNA_EMBED_DEFAULT "file")
+# Not a cache variable / option on purpose: this must track CMAKE_BUILD_TYPE
+# exactly, every configure, with no way for a stale -DLUNA_EMBED=... from an
+# earlier run (or a well-meaning override) to make it drift out of sync. Only
+# a Release build bakes lua/ into the binary; every other build type -- Debug,
+# RelWithDebInfo, MinSizeRel, or none at all -- reads it from disk.
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+  set(LUNA_EMBED "bytecode")
 else()
-  set(LUNA_EMBED_DEFAULT "bytecode")
+  set(LUNA_EMBED "file")
 endif()
 
-set(LUNA_EMBED "${LUNA_EMBED_DEFAULT}"
-    CACHE STRING "How lua/init.lua reaches the interpreter")
-set_property(CACHE LUNA_EMBED PROPERTY STRINGS bytecode source file)
-
-# Strips line numbers and local names from the bytecode, which costs script
-# errors their tracebacks. Off for a debug build, on the same reasoning as
-# LUNA_EMBED: it only matters if bytecode was asked for explicitly there.
-if(LUNA_EMBED_DEFAULT STREQUAL "file")
+if(LUNA_EMBED STREQUAL "file")
   set(LUNA_STRIP_DEBUG_DEFAULT OFF)
 else()
   set(LUNA_STRIP_DEBUG_DEFAULT ON)
@@ -114,8 +100,9 @@ endif()
 find_program(CLANG_FORMAT_EXECUTABLE NAMES clang-format)
 find_program(STYLUA_EXECUTABLE NAMES stylua)
 
-# api_gen.hpp is generated, and excluded so the `api` target's output never
-# fights the formatter.
+# api_gen.hpp and the lsp_stub/ placeholders (both generated: gen_api.py and
+# luakit_embed_dir's STUB_DIR, respectively) are excluded so their output
+# never fights the formatter.
 file(GLOB_RECURSE LUNA_FORMAT_CXX CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
@@ -124,6 +111,7 @@ file(GLOB_RECURSE LUNA_FORMAT_CXX CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/*.hpp")
 list(REMOVE_ITEM LUNA_FORMAT_CXX
      "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/core/api_gen.hpp")
+list(FILTER LUNA_FORMAT_CXX EXCLUDE REGEX "/lsp_stub/")
 
 file(GLOB_RECURSE LUNA_FORMAT_LUA CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/lua/*.lua")

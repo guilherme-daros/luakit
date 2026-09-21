@@ -3,6 +3,7 @@
 #include "luakit/core/api.hpp"
 #include "luakit/error.hpp"
 #include "luakit/module.hpp"
+#include "luakit/script.hpp"
 #include "luakit/stack.hpp"
 #include "luakit/table.hpp"
 #include "luakit/userdata.hpp"
@@ -75,6 +76,16 @@ class Interpreter {
   }
 
   auto script_file(const char *path) -> void { run(core::aux::loadfile(L_, path), "cannot load"); }
+
+  // Runs a Script from luakit_embed_dir's generated table, whichever of
+  // embedded bytes or a disk path it turned out to hold.
+  auto load(const Script &s) -> void {
+    if (s.data) {
+      script_bytecode(s.data, s.len, s.chunkname);
+    } else {
+      script_file(s.path);
+    }
+  }
 
   // Forgets a loaded module, so the next require runs its opener or file
   // again. Unknown module names are not an error: the point is to end up with
