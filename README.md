@@ -193,7 +193,7 @@ One rule comes with it. A `Function` holds a reference into the registry and
 gives it back when it is destroyed, so it must not outlive the `Interpreter`.
 A handler container that is a namespace-scope static gets destroyed after
 `main` returns, which is after `lua_close` -- release them first.
-`src/packages/world.cpp` does this in `world::shutdown`, driven by a guard in
+`src/packages/world/world.cpp` does this in `world::shutdown`, driven by a guard in
 `main` so an early return cannot skip it.
 
 `luakit::Table` does the same for tables, which is usually how a plugin's

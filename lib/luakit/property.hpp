@@ -50,14 +50,11 @@ auto prop_set_impl(core::State *L) -> int {
 
 // A member variable, readable and writable from Lua:
 //
-//   const luakit::PropertyReg entity_fields[] = {
-//       luakit::prop<&Entity::hp>("hp"),
-//       luakit::ro_prop<&Entity::name>("name"),
-//       luakit::accessor<&Entity::speed, &Entity::set_speed>("speed"),
-//       luakit::prop_end,
-//   };
-//
-//   interpreter.bind<Entity>(entity_methods, nullptr, entity_fields);
+//   luakit::Class<Entity>(L)
+//       .prop<&Entity::hp>("hp")
+//       .ro_prop<&Entity::name>("name")
+//       .accessor<&Entity::speed, &Entity::set_speed>("speed")
+//       .build();
 //
 // Reads and writes go through Stack<T>, so a field is checked exactly as a
 // function argument would be: `entity.hp = "lots"` is refused, by name.

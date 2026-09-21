@@ -21,7 +21,7 @@ end
 
 -- ------------------------------------------------------------ the basics
 
-section("plain functions")
+section("plain functions, built with the Library builder")
 
 say("luna.sum(2, 3) = " .. luna.sum(2, 3))
 say("luna.greet('lua') = " .. luna.greet("lua"))
@@ -33,7 +33,7 @@ say("bad element -> " .. tostring(err))
 local ok2, err2 = pcall(luna.boom)
 say("luna.boom() -> " .. tostring(err2))
 
-section("a class with hand-written Reg arrays")
+section("a class with the Class<T> builder")
 
 local t = tracker.new("latency")
 t:add(10):add(12):add(17):add(8)

@@ -1,6 +1,6 @@
 #include "luna.hpp"
 
-#include "luakit/function.hpp"
+#include "luakit/library.hpp"
 
 #include <stdexcept>
 #include <string>
@@ -31,17 +31,10 @@ auto boom() -> void {
   throw std::runtime_error("a std::runtime_error from C++");
 }
 
-const core::aux::Reg funcs[] = {
-    {"sum",   luakit::fn<sum>  },
-    {"greet", luakit::fn<greet>},
-    {"scale", luakit::fn<scale>},
-    {"boom",  luakit::fn<boom> },
-    {nullptr, nullptr          },
-};
-
 }  // namespace luna
 
-extern "C" auto luaopen_luna(core::State *L) -> int {
-  core::aux::newlib(L, luna::funcs);
-  return 1;
+auto luaopen_luna(core::State *L) -> int {
+  using namespace luna;
+
+  return luakit::Library(L).fn<sum>("sum").fn<greet>("greet").fn<scale>("scale").fn<boom>("boom").build_module();
 }

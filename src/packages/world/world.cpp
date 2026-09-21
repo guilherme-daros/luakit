@@ -4,25 +4,25 @@
 // registers handlers the engine fires; both sides pass tables, maps, enums and
 // values back and forth. Everything here is what a mod would actually touch.
 //
-// luna.cpp and tracker.cpp show the same binding with hand-written Reg arrays.
-// This one uses the Class<T> builder, which is the same registration with the
-// arrays folded away.
+// Vec2, Entity and Creature each get their own file in this directory,
+// registered with the Class<T> builder; the free functions below are
+// registered with luakit::Library, its counterpart for a module with no
+// class involved.
 
 #include "world.hpp"
 
+#include "creature.hpp"
+#include "entity.hpp"
+#include "vec2.hpp"
+
 #include "luakit/callback.hpp"
-#include "luakit/class.hpp"
 #include "luakit/coroutine.hpp"
-#include "luakit/enums.hpp"
-#include "luakit/function.hpp"
+#include "luakit/library.hpp"
 #include "luakit/overload.hpp"
-#include "luakit/property.hpp"
 #include "luakit/table.hpp"
-#include "luakit/userdata.hpp"
 #include "luakit/variadic.hpp"
 
 #include <algorithm>
-#include <cmath>
 #include <cstdio>
 #include <deque>
 #include <map>
@@ -32,110 +32,6 @@
 #include <vector>
 
 namespace core = luakit::core;
-
-namespace world {
-
-// ---------------------------------------------------------------- types
-
-// A value type. Lua gets its own copy, which the collector owns, because a
-// vector with no home in the engine has nothing to borrow from.
-struct Vec2 {
-  double x = 0;
-  double y = 0;
-
-  Vec2() = default;
-  Vec2(double a, double b) : x(a), y(b) {}
-
-  auto length() const -> double { return std::sqrt(x * x + y * y); }
-  auto plus(Vec2 other) const -> Vec2 { return {x + other.x, y + other.y}; }
-  auto plus(double scalar) const -> Vec2 { return {x + scalar, y + scalar}; }
-  auto describe() const -> std::string {
-    char buf[48];
-    std::snprintf(buf, sizeof buf, "(%.1f, %.1f)", x, y);
-    return buf;
-  }
-};
-
-enum class Facing { north, south, east, west };
-
-// The engine's own objects. Scripts see pointers to these and never own one.
-class Entity {
- public:
-  std::string name;
-  Vec2 position;
-
-  explicit Entity(std::string n) : name(std::move(n)) {}
-  virtual ~Entity() = default;
-
-  // Lua holds these by address, so copying one would give a script a handle to
-  // something the engine does not know about.
-  Entity(const Entity &) = delete;
-  auto operator=(const Entity &) -> Entity & = delete;
-
-  auto move_by(Vec2 delta) -> Entity & {
-    position = position.plus(delta);
-    return *this;
-  }
-
-  auto describe() const -> std::string { return "<" + name + " at " + position.describe() + ">"; }
-};
-
-// Single inheritance here because that is what a world like this needs.
-// Several bases work the same way, with the pointer adjusted for each.
-class Creature : public Entity {
- public:
-  using Entity::Entity;
-
-  auto damage(int amount) -> Creature & {
-    hp_ = std::max(0, hp_ - amount);
-    return *this;
-  }
-
-  auto health() const -> int { return hp_; }
-
-  // A setter is what makes this worth being an accessor rather than a plain
-  // field: the clamp applies however a script writes to it.
-  auto set_health(int v) -> void { hp_ = std::clamp(v, 0, 100); }
-
-  auto alive() const -> bool { return hp_ > 0; }
-
-  auto facing() const -> Facing { return facing_; }
-  auto set_facing(Facing f) -> void { facing_ = f; }
-
- private:
-  int hp_ = 100;
-  Facing facing_ = Facing::north;
-};
-
-}  // namespace world
-
-// A specialization has to name the primary template's namespace, so these
-// cannot live inside namespace world.
-template <>
-struct luakit::Metatable<world::Vec2> {
-  static constexpr const char *k_name = "world.Vec2";
-};
-template <>
-struct luakit::Metatable<world::Entity> {
-  static constexpr const char *k_name = "world.Entity";
-};
-template <>
-struct luakit::Metatable<world::Creature> {
-  static constexpr const char *k_name = "world.Creature";
-  using bases = luakit::Bases<world::Entity>;
-};
-
-// An enum reaches Lua as a string, so a script writes `c.facing = "north"` and
-// a misspelling is caught at the assignment with the alternatives listed.
-template <>
-struct luakit::EnumNames<world::Facing> {
-  static constexpr luakit::EnumEntry<world::Facing> k_values[] = {
-      {"north", world::Facing::north},
-      {"south", world::Facing::south},
-      {"east",  world::Facing::east },
-      {"west",  world::Facing::west },
-  };
-};
 
 namespace world {
 
@@ -268,24 +164,6 @@ auto wait(int turns) -> int {
   return turns;  // yielded to whoever is driving, so it knows how long to hold
 }
 
-const core::aux::Reg funcs[] = {
-    {"spawn", luakit::fn<spawn>},
-    {"find", luakit::fn<find>},
-    {"summon", luakit::fn<summon>},
-    {"banish", luakit::fn<banish>},
-    {"census", luakit::fn<census>},
-    {"spawn_many", luakit::fn<spawn_many>},
-    {"opposite", luakit::fn<opposite>},
-    {"configure", luakit::fn<configure>},
-    {"log", luakit::fn<log>},
-    {"on_tick", luakit::fn<on_tick>},
-    {"wait", luakit::yielding<wait>},
-    {"distance", luakit::fn_overload<static_cast<double (*)(Vec2, Vec2)>(distance),
-     static_cast<double (*)(Creature *, Creature *)>(distance)>},
-    {"vec2", luakit::ctor_overload<Vec2, luakit::Args<>, luakit::Args<double, double>>},
-    {nullptr, nullptr},
-};
-
 }  // namespace
 
 // ------------------------------------------------------------ host side
@@ -334,7 +212,7 @@ auto shutdown() -> void {
 
 }  // namespace world
 
-extern "C" auto luaopen_world(core::State *L) -> int {
+auto luaopen_world(core::State *L) -> int {
   using namespace world;
 
   ++opens;
@@ -342,29 +220,24 @@ extern "C" auto luaopen_world(core::State *L) -> int {
 
   // Registration order matters: a base has to be in place before the classes
   // that inherit from it copy its members down.
-  luakit::Class<Vec2>(L)
-      .method<&Vec2::length>("length")
-      .overload<static_cast<Vec2 (Vec2::*)(Vec2) const>(&Vec2::plus),
-                static_cast<Vec2 (Vec2::*)(double) const>(&Vec2::plus)>("plus")
-      .prop<&Vec2::x>("x")
-      .prop<&Vec2::y>("y")
-      .meta<&Vec2::describe>("__tostring")
-      .build();
+  register_vec2(L);
+  register_entity(L);
+  register_creature(L);
 
-  luakit::Class<Entity>(L)
-      .method<&Entity::move_by>("move_by")
-      .ro_prop<&Entity::name>("name")
-      .prop<&Entity::position>("position")
-      .meta<&Entity::describe>("__tostring")
-      .build();
-
-  luakit::Class<Creature>(L)
-      .method<&Creature::damage>("damage")
-      .accessor<&Creature::health, &Creature::set_health>("hp")
-      .accessor<&Creature::alive>("alive")
-      .accessor<&Creature::facing, &Creature::set_facing>("facing")
-      .build();
-
-  core::aux::newlib(L, funcs);
-  return 1;
+  return luakit::Library(L)
+      .fn<spawn>("spawn")
+      .fn<find>("find")
+      .fn<summon>("summon")
+      .fn<banish>("banish")
+      .fn<census>("census")
+      .fn<spawn_many>("spawn_many")
+      .fn<opposite>("opposite")
+      .fn<configure>("configure")
+      .fn<world::log>("log")  // qualified: unqualified log is ambiguous with ::log(double)
+      .fn<on_tick>("on_tick")
+      .raw_fn("wait", luakit::yielding<wait>)
+      .overload<static_cast<double (*)(Vec2, Vec2)>(distance),
+                static_cast<double (*)(Creature *, Creature *)>(distance)>("distance")
+      .raw_fn("vec2", luakit::ctor_overload<Vec2, luakit::Args<>, luakit::Args<double, double>>)
+      .build_module();
 }

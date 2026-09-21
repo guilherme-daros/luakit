@@ -1,6 +1,6 @@
 #include "tracker.hpp"
 
-#include "luakit/function.hpp"
+#include "luakit/class.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -61,32 +61,16 @@ struct luakit::Metatable<tracker::Tracker> {
   static constexpr const char *k_name = "luna.Tracker";
 };
 
-namespace tracker {
+auto luaopen_tracker(core::State *L) -> int {
+  using namespace tracker;
 
-const core::aux::Reg methods[] = {
-    {"add",   luakit::method<&Tracker::add> },
-    {"mean",  luakit::method<&Tracker::mean>},
-    {"max",   luakit::method<&Tracker::max> },
-    {"name",  luakit::method<&Tracker::name>},
-    {nullptr, nullptr                       },
-};
-
-const core::aux::Reg meta[] = {
-    {"__len",      luakit::method<&Tracker::count>   },
-    {"__tostring", luakit::method<&Tracker::describe>},
-    {nullptr,      nullptr                           },
-};
-
-const core::aux::Reg funcs[] = {
-    {"new", luakit::ctor<Tracker, std::string>},
-    {nullptr, nullptr},
-};
-
-}  // namespace tracker
-
-extern "C" auto luaopen_tracker(core::State *L) -> int {
-  luakit::Userdata<tracker::Tracker>::register_class(L, tracker::methods, tracker::meta);
-
-  core::aux::newlib(L, tracker::funcs);
-  return 1;
+  return luakit::Class<Tracker>(L)
+      .method<&Tracker::add>("add")
+      .method<&Tracker::mean>("mean")
+      .method<&Tracker::max>("max")
+      .method<&Tracker::name>("name")
+      .meta<&Tracker::count>("__len")
+      .meta<&Tracker::describe>("__tostring")
+      .ctor<std::string>("new")
+      .build_module();
 }
