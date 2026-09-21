@@ -71,7 +71,7 @@ auto open_mod(core::State *L) -> int {
 struct Host {
   luakit::Interpreter lua;
   Host() {
-    lua.open_libs().bind<Entity>(entity_methods, nullptr, entity_fields).preload({"m", open_mod});
+    lua.openlibs().bind<Entity>(entity_methods, nullptr, entity_fields).preload({"m", open_mod});
     lua.script("m = require('m')");
   }
 };

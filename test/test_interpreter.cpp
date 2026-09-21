@@ -54,7 +54,7 @@ auto test_lifecycle() -> void {
   t::section("Interpreter lifecycle");
   luakit::Interpreter s;
   CHECK(s.raw() != nullptr);
-  s.open_libs();
+  s.openlibs();
   s.script("x = 1 + 1");
   CHECK_EQ(s.global<int>("x"), 2);
 }
@@ -62,7 +62,7 @@ auto test_lifecycle() -> void {
 auto test_move() -> void {
   t::section("Interpreter is movable, not copyable");
   luakit::Interpreter a;
-  a.open_libs();
+  a.openlibs();
   a.script("y = 41");
   core::State *raw = a.raw();
 
@@ -81,7 +81,7 @@ auto test_move() -> void {
 auto test_errors_are_exceptions() -> void {
   t::section("script failures become luakit::Error");
   luakit::Interpreter s;
-  s.open_libs();
+  s.openlibs();
 
   bool caught = false;
   try {
@@ -111,7 +111,7 @@ auto test_errors_are_exceptions() -> void {
 auto test_runtime_error_has_a_traceback() -> void {
   t::section("a runtime error carries a traceback");
   luakit::Interpreter s;
-  s.open_libs();
+  s.openlibs();
 
   bool caught = false;
   try {
@@ -135,7 +135,7 @@ auto test_runtime_error_has_a_traceback() -> void {
 auto test_non_string_error_object() -> void {
   t::section("a non-string error object is still reported");
   luakit::Interpreter s;
-  s.open_libs();
+  s.openlibs();
 
   bool caught = false;
   try {
@@ -160,7 +160,7 @@ auto test_non_string_error_object() -> void {
 auto test_preload_and_bind() -> void {
   t::section("preload and bind");
   luakit::Interpreter s;
-  s.open_libs().bind<Widget>(widget_methods).preload({"mod", open_mod});
+  s.openlibs().bind<Widget>(widget_methods).preload({"mod", open_mod});
 
   // Not loaded until required.
   s.script("assert(package.loaded.mod == nil)");
@@ -178,7 +178,7 @@ auto test_preload_and_bind() -> void {
 auto test_script_bytecode() -> void {
   t::section("script_bytecode accepts plain source too");
   luakit::Interpreter s;
-  s.open_libs();
+  s.openlibs();
   const char *src = "bc = 'loaded'";
   s.script_bytecode(src, std::char_traits<char>::length(src), "@fake.lua");
   CHECK_STR(s.global<std::string>("bc"), "loaded");
@@ -201,7 +201,7 @@ auto test_unload_and_reload() -> void {
   t::section("a module can be unloaded and reloaded");
   luakit::Interpreter s;
   open_count = 0;
-  s.open_libs().preload({"plugin", open_versioned});
+  s.openlibs().preload({"plugin", open_versioned});
 
   CHECK(!s.loaded("plugin"));
 
@@ -233,7 +233,7 @@ auto test_unload_and_reload() -> void {
 auto test_reload_failure_leaves_it_unloaded() -> void {
   t::section("a module that fails to reload is left unloaded");
   luakit::Interpreter s;
-  s.open_libs();
+  s.openlibs();
   s.script("package.preload.broken = function() error('bad plugin') end");
 
   bool caught = false;
@@ -254,16 +254,33 @@ auto test_reload_failure_leaves_it_unloaded() -> void {
 
 auto test_reload_needs_the_libraries() -> void {
   t::section("reload says so when require is missing");
-  luakit::Interpreter s;  // deliberately no open_libs
+  luakit::Interpreter s;  // deliberately no openlibs
 
   bool caught = false;
   try {
     s.reload("anything");
   } catch (const luakit::Error &e) {
     caught = true;
-    CHECK(std::string(e.what()).find("open_libs") != std::string::npos);
+    CHECK(std::string(e.what()).find("openlibs") != std::string::npos);
   }
   CHECK(caught);
+}
+
+auto test_openlib_opens_only_what_was_asked_for() -> void {
+  t::section("openlib opens one library, not all of them");
+  luakit::Interpreter s;
+  s.openlib(luakit::Lib::base);  // for assert() itself, used below
+  s.openlib(luakit::Lib::string);
+
+  // string itself is there, both as a global and registered as loaded --
+  // the same two places openlibs would have put it.
+  s.script("assert(string.upper('ok') == 'OK')");
+  CHECK(s.loaded("string"));
+
+  // table was never opened, so it is absent from both -- openlib is not
+  // secretly opening everything and hiding the rest.
+  s.script("assert(table == nil)");
+  CHECK(!s.loaded("table"));
 }
 
 }  // namespace
@@ -279,5 +296,6 @@ auto main() -> int {
   test_unload_and_reload();
   test_reload_failure_leaves_it_unloaded();
   test_reload_needs_the_libraries();
+  test_openlib_opens_only_what_was_asked_for();
   return t::summary();
 }

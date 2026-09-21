@@ -33,7 +33,7 @@ auto registry_size(Interpreter &lua) -> int {
 auto test_roundtrip() -> void {
   t::section("a value survives the round trip through the registry");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   core::pushstring(L, "anchored");
@@ -49,7 +49,7 @@ auto test_roundtrip() -> void {
 auto test_at_leaves_the_stack_alone() -> void {
   t::section("at() copies rather than consuming");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   core::pushinteger(L, 7);
@@ -69,7 +69,7 @@ auto test_at_leaves_the_stack_alone() -> void {
 auto test_survives_collection() -> void {
   t::section("the value survives garbage collection");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   lua.script("__t = {mark = 'still here'}");
@@ -90,7 +90,7 @@ auto test_survives_collection() -> void {
 auto test_empty_ref() -> void {
   t::section("a default-constructed Ref is empty and pushes nil");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   Ref r;
@@ -109,7 +109,7 @@ auto test_empty_ref() -> void {
 auto test_ref_to_nil() -> void {
   t::section("a Ref to nil is valid and pushes nil");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   core::pushnil(L);
@@ -122,7 +122,7 @@ auto test_ref_to_nil() -> void {
 auto test_move_semantics() -> void {
   t::section("move transfers the anchor and empties the source");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   core::pushstring(L, "moved");
@@ -148,7 +148,7 @@ auto test_move_semantics() -> void {
 auto test_reset_releases() -> void {
   t::section("reset releases the anchor and empties the Ref");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   core::pushstring(L, "x");
@@ -165,7 +165,7 @@ auto test_reset_releases() -> void {
 auto test_no_registry_leak() -> void {
   t::section("destruction returns the registry slot");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   // One cycle first: the very first ref is what allocates the free-list head,

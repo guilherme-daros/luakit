@@ -50,7 +50,7 @@ auto open_scheduler(core::State *L) -> int {
 struct Host {
   Interpreter lua;
   Host() {
-    lua.open_libs();
+    lua.openlibs();
     lua.script(R"LUA(
       function counter()
         for i = 1, 3 do coroutine.yield(i) end
@@ -271,7 +271,7 @@ auto test_from_stack() -> void {
 auto test_yielding_function() -> void {
   t::section("a bound C++ function can yield");
   Interpreter lua;
-  lua.open_libs().preload({"sched", open_scheduler});
+  lua.openlibs().preload({"sched", open_scheduler});
   slept_for = 0;
   sleep_calls = 0;
 
@@ -313,7 +313,7 @@ auto test_yielding_function() -> void {
 auto test_yielding_without_a_value() -> void {
   t::section("a yielding function with no return value");
   Interpreter lua;
-  lua.open_libs().preload({"sched", open_scheduler});
+  lua.openlibs().preload({"sched", open_scheduler});
 
   lua.script(R"LUA(
     local sched = require("sched")
@@ -334,7 +334,7 @@ auto test_yielding_without_a_value() -> void {
 auto test_yielding_outside_a_coroutine() -> void {
   t::section("yielding outside a coroutine is refused");
   Interpreter lua;
-  lua.open_libs().preload({"sched", open_scheduler});
+  lua.openlibs().preload({"sched", open_scheduler});
 
   lua.script(R"LUA(
     local sched = require("sched")

@@ -157,7 +157,7 @@ auto open_more(core::State *L) -> int {
 struct Host {
   luakit::Interpreter lua;
   Host() {
-    lua.open_libs().preload({"world", open_world}).preload({"more", open_more});
+    lua.openlibs().preload({"world", open_world}).preload({"more", open_more});
     lua.script("w = require('world') n = require('more')");
   }
 };
@@ -380,7 +380,7 @@ auto test_reserved_metamethods_cannot_be_replaced() -> void {
   dog_dtors = 0;
   {
     luakit::Interpreter lua;
-    lua.open_libs();
+    lua.openlibs();
 
     static bool intruder_ran = false;
     const core::aux::Reg meta[] = {

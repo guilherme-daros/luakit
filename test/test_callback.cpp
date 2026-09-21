@@ -54,7 +54,7 @@ auto global_fn(Interpreter &lua, const char *name) -> Function {
 auto test_call_basics() -> void {
   t::section("calling a Lua function from C++");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   lua.script(
       "function double_it(x) return x * 2 end\n"
       "function greet(who) return 'hello, ' .. who end\n"
@@ -90,7 +90,7 @@ auto test_empty_function() -> void {
 auto test_error_inside_the_callback() -> void {
   t::section("an error in the callback throws, with a traceback");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   lua.script(
       "local function inner() error('plugin fault') end\n"
       "function faulty() inner() end\n");
@@ -110,7 +110,7 @@ auto test_error_inside_the_callback() -> void {
 auto test_wrong_result_type() -> void {
   t::section("a result of the wrong type throws instead of raising");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   CHECK_OK(lua.script("function gives_table() return {} end"));
 
   bool caught = false;
@@ -128,7 +128,7 @@ auto test_wrong_result_type() -> void {
 auto test_stack_is_balanced() -> void {
   t::section("the stack is restored on both paths");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   lua.script(
       "function ok(a, b, c) return a + b + c end\n"
       "function bad() error('nope') end\n");
@@ -156,7 +156,7 @@ auto test_handler_outlives_registration() -> void {
   handlers.clear();
 
   Interpreter lua;
-  lua.open_libs().preload({"engine", open_engine});
+  lua.openlibs().preload({"engine", open_engine});
   CHECK_OK(lua.script(R"LUA(
     local engine = require("engine")
     total = 0
@@ -185,7 +185,7 @@ auto test_handler_outlives_registration() -> void {
 auto test_callback_as_parameter() -> void {
   t::section("a callback used within the call that received it");
   Interpreter lua;
-  lua.open_libs().preload({"engine", open_engine});
+  lua.openlibs().preload({"engine", open_engine});
   CHECK_OK(lua.script(R"LUA(
     local engine = require("engine")
     assert(engine.apply(function(x) return x + 1 end, 41) == 42)
@@ -203,7 +203,7 @@ auto test_callback_as_parameter() -> void {
 auto test_error_propagates_back_through_cpp() -> void {
   t::section("a callback fault crossing a C++ frame becomes a Lua error");
   Interpreter lua;
-  lua.open_libs().preload({"engine", open_engine});
+  lua.openlibs().preload({"engine", open_engine});
   CHECK_OK(lua.script(R"LUA(
     local engine = require("engine")
     local ok, err = pcall(engine.apply, function() error("from the callback") end, 1)
@@ -215,7 +215,7 @@ auto test_error_propagates_back_through_cpp() -> void {
 auto test_move_semantics() -> void {
   t::section("Function is movable and the source is emptied");
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   CHECK_OK(lua.script("function five() return 5 end"));
 
   Function a = global_fn(lua, "five");
@@ -237,7 +237,7 @@ auto test_stack_specialization() -> void {
   static_assert(!luakit::Stack<Function>::borrows);
 
   Interpreter lua;
-  lua.open_libs();
+  lua.openlibs();
   core::State *L = lua.raw();
 
   CHECK_OK(lua.script("function f() end"));

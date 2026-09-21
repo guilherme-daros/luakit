@@ -135,7 +135,7 @@ struct Host {
     host_shared.reset();
     entity_dtors = 0;
     point_dtors = 0;
-    lua.open_libs().bind<Entity>(entity_methods).bind<Point>(point_methods).preload({"engine", open_engine});
+    lua.openlibs().bind<Entity>(entity_methods).bind<Point>(point_methods).preload({"engine", open_engine});
   }
   ~Host() {
     world.clear();
@@ -432,7 +432,7 @@ auto test_close_does_not_free_borrowed() -> void {
   // and would take the survivor with it before it could be examined.
   {
     luakit::Interpreter lua;
-    lua.open_libs().bind<Entity>(entity_methods).preload({"engine", open_engine});
+    lua.openlibs().bind<Entity>(entity_methods).preload({"engine", open_engine});
     CHECK_OK(lua.script(R"LUA(
       local engine = require("engine")
       survivor = engine.spawn("survivor")

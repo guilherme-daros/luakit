@@ -15,6 +15,11 @@
 
 namespace luakit {
 
+// The standard libraries, for opening one at a time with Interpreter::openlib
+// rather than all of them with Interpreter::openlibs. Named and ordered the
+// way luaL_openlibs' own internal table is.
+enum class Lib { base, package, coroutine, table, io, os, string, math, utf8, debug };
+
 // Owns a lua_State. This is the host-side entry point; code running inside a
 // bound callback is handed a borrowed core::State* instead and must not own it,
 // which is why Stack<T> and the fn/method wrappers all take the raw pointer.
@@ -43,13 +48,53 @@ class Interpreter {
   // Escape hatch, for mixing with hand-written C API code.
   auto raw() const noexcept -> core::State * { return L_; }
 
-  auto open_libs() -> Interpreter & {
+  auto openlibs() -> Interpreter & {
     core::aux::openlibs(L_);
     return *this;
   }
 
-  // Advertise a module to require without loading it. Must follow open_libs,
-  // which is what creates `package`.
+  // Opens a single standard library, the way luaL_openlibs would open just
+  // that one: registered in package.loaded and as a global under its usual
+  // name (e.g. Lib::string gives you both package.loaded.string and _G.string).
+  auto openlib(Lib lib) -> Interpreter & {
+    switch (lib) {
+      case Lib::base:
+        core::aux::requiref(L_, core::GNAME, core::lib::base, 1);
+        break;
+      case Lib::package:
+        core::aux::requiref(L_, core::LOADLIBNAME, core::lib::package, 1);
+        break;
+      case Lib::coroutine:
+        core::aux::requiref(L_, core::COLIBNAME, core::lib::coroutine, 1);
+        break;
+      case Lib::table:
+        core::aux::requiref(L_, core::TABLIBNAME, core::lib::table, 1);
+        break;
+      case Lib::io:
+        core::aux::requiref(L_, core::IOLIBNAME, core::lib::io, 1);
+        break;
+      case Lib::os:
+        core::aux::requiref(L_, core::OSLIBNAME, core::lib::os, 1);
+        break;
+      case Lib::string:
+        core::aux::requiref(L_, core::STRLIBNAME, core::lib::string, 1);
+        break;
+      case Lib::math:
+        core::aux::requiref(L_, core::MATHLIBNAME, core::lib::math, 1);
+        break;
+      case Lib::utf8:
+        core::aux::requiref(L_, core::UTF8LIBNAME, core::lib::utf8, 1);
+        break;
+      case Lib::debug:
+        core::aux::requiref(L_, core::DBLIBNAME, core::lib::debug, 1);
+        break;
+    }
+    core::pop(L_, 1);  // requiref leaves the module table on the stack
+    return *this;
+  }
+
+  // Advertise a module to require without loading it. Must follow openlibs
+  // (or at least openlib(Lib::package)), which is what creates `package`.
   auto preload(Module lib) -> Interpreter & {
     core::aux::getsubtable(L_, core::REGISTRYINDEX, core::PRELOAD_TABLE);
     core::pushcfunction(L_, lib.open);
@@ -116,7 +161,7 @@ class Interpreter {
     core::getglobal(L_, "require");
     if (!core::isfunction(L_, -1)) {
       core::pop(L_, 1);
-      throw Error("luakit: reload needs the standard libraries; call open_libs first");
+      throw Error("luakit: reload needs the standard libraries; call openlibs first");
     }
     core::pushstring(L_, module);
     fail_if(detail::call_traced(L_, 1, 0), "error reloading");

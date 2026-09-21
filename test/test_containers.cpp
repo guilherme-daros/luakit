@@ -139,7 +139,7 @@ auto open_m(core::State *L) -> int {
 struct Host {
   luakit::Interpreter lua;
   Host() {
-    lua.open_libs().preload({"m", open_m});
+    lua.openlibs().preload({"m", open_m});
     lua.script("m = require('m')");
   }
 };

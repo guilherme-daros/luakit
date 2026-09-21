@@ -43,7 +43,7 @@ auto open_engine(core::State *L) -> int {
 struct Host {
   Interpreter lua;
   Host() {
-    lua.open_libs();
+    lua.openlibs();
     lua.script(R"LUA(
       config = {
         title = "demo",

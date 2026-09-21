@@ -78,7 +78,7 @@ auto reload_plugin(luakit::Interpreter &lua) -> void {
 auto run(luakit::Interpreter &interpreter) -> void {
   auto session = WorldSession();
 
-  interpreter.open_libs();
+  interpreter.openlibs();
 
   interpreter.preload(mod::luna());
   interpreter.preload(mod::tracker());

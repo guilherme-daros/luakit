@@ -39,7 +39,7 @@ auto open_mod(core::State *L) -> int {
 auto test_fn_and_raw_fn() -> void {
   t::section("a module built from free functions");
   luakit::Interpreter s;
-  s.open_libs().preload({"mod", open_mod});
+  s.openlibs().preload({"mod", open_mod});
 
   CHECK_OK(s.script(R"LUA(
     local m = require("mod")

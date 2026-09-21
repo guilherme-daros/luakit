@@ -72,7 +72,7 @@ target_link_libraries(my_game PRIVATE luakit::luakit)
 
 ```cpp
 luakit::Interpreter lua;
-lua.open_libs()
+lua.openlibs()
    .preload({"world", luaopen_world})   // available to require, not yet run
    .script_file("mods/init.lua");
 ```
@@ -80,6 +80,9 @@ lua.open_libs()
 `Interpreter` owns the `lua_State` and closes it. Failures -- a chunk that will
 not load, an error at runtime -- arrive as `luakit::Error`, with a traceback
 attached, rather than as a status code to forget to check.
+
+A sandboxed plugin rarely wants all of them: `lua.openlib(luakit::Lib::string)`
+opens just the one, the way `openlibs()` would have, without the rest.
 
 ## Exposing C++ to Lua
 
