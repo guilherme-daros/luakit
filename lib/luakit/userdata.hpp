@@ -7,8 +7,24 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
+
+// Most-derived-type resolution needs typeid and dynamic_cast. Plenty of game
+// builds turn RTTI off, so it is detected rather than assumed: without it
+// everything below still works, and pushing a base pointer simply produces a
+// base-typed userdata, which is what it did before the feature existed.
+#if defined(__cpp_rtti) || defined(__GXX_RTTI) || defined(_CPPRTTI)
+#define LUAKIT_HAS_RTTI 1
+#else
+#define LUAKIT_HAS_RTTI 0
+#endif
+
+#if LUAKIT_HAS_RTTI
+#include <typeinfo>
+#endif
 
 namespace luakit {
 
@@ -54,14 +70,18 @@ struct PropertyReg {
 
 // Who is responsible for destroying the object behind a userdata.
 //
-// A host embedding Lua for plugins needs all three. The game creates most
+// A host embedding Lua for plugins needs all of them. The game creates most
 // objects itself and merely lends them to a script -- an entity lives in the
 // world, not in the collector -- while a script that builds its own objects
-// wants them collected like anything else.
+// wants them collected like anything else. `unique` is the transfer case: the
+// host built the object and is handing it over for good, which is the one
+// shape `owned` cannot express, since the object is already allocated
+// elsewhere and may well not be movable.
 enum class Ownership : unsigned char {
   owned,     // constructed in place, destroyed by __gc
   borrowed,  // the host's object; __gc leaves it alone
   shared,    // a shared_ptr, whose count __gc drops
+  unique,    // a unique_ptr handed over; __gc destroys through it
 };
 
 // The fixed header every userdata starts with, whatever it owns.
@@ -199,6 +219,52 @@ auto upcast(void *p) noexcept -> void * {
   return static_cast<Base *>(static_cast<Derived *>(p));
 }
 
+// ---------------------------------------------- most-derived-type resolution
+//
+// Passing a Derived where a Base is expected is handled by the cast table
+// above. Handing one *out* is the other direction, and the harder one: an
+// engine API is mostly base pointers -- Entity *find(), Entity *parent(),
+// std::vector<Entity *> children() -- so without this, pushing a Base * for an
+// object that is really a Creature produced a Base-typed userdata with its own
+// entry in a *different* identity cache. The same C++ object then reached Lua
+// as two unrelated values: `a == b` was false, the derived members were
+// missing, and a field a mod stashed through one handle was invisible through
+// the other.
+//
+// So register_class records, per registered polymorphic type, a thunk that
+// pushes an object as that type, keyed by its typeid name. push_ref consults
+// it with typeid(*p) and delegates, and the object ends up with exactly one
+// userdata, of its most derived *registered* type. A derived type nobody
+// registered simply misses, and the static type is used, as before.
+
+// Pushes `most_derived` -- a void * from dynamic_cast, so the address of the
+// complete object -- as D.
+//
+// `want` is the type key of the static type being pushed. D has to be able to
+// reach it, or a parameter declared as that static type could not read the
+// value back; when it cannot, this answers false and the caller falls back to
+// pushing as the static type. That is what keeps a derived class which never
+// declared its bases from making its base's own API unusable.
+using Pusher = bool (*)(core::State *L, void *most_derived, const void *want);
+
+template <typename D>
+auto push_most_derived(core::State *L, void *most_derived, const void *want) -> bool;
+
+// The registry slot holding the typeid-name -> Pusher table.
+inline auto pushers_key() noexcept -> const void * {
+  static const char key = 0;
+  return &key;
+}
+
+inline auto push_pushers(core::State *L) -> void {
+  if (core::rawgetp(L, core::REGISTRYINDEX, pushers_key()) == core::TTABLE) return;
+  core::pop(L, 1);  // the nil
+
+  core::createtable(L, 0, 8);
+  core::pushvalue(L, -1);
+  core::rawsetp(L, core::REGISTRYINDEX, pushers_key());
+}
+
 }  // namespace detail
 
 // Checked with static_assert rather than a requires-clause on the template.
@@ -216,6 +282,7 @@ struct Userdata {
 
   using box_type = Box<T>;
   using shared_type = std::shared_ptr<T>;
+  using unique_type = std::unique_ptr<T>;
 
   // Lua aligns every allocation to LUAI_MAXALIGN, which covers the fundamental
   // types and nothing beyond them -- in practice 8 bytes. An over-aligned T,
@@ -284,17 +351,51 @@ struct Userdata {
   //
   // A null pointer pushes nil, so an absent thing reads as absent in Lua
   // rather than as an object that faults on first use.
+  // A more derived registered type wins, so one C++ object is one Lua object
+  // however the host happened to spell the pointer it handed over.
   static auto push_ref(core::State *L, T *p) -> void {
     if (!p) {
       core::pushnil(L);
       return;
     }
+#if LUAKIT_HAS_RTTI
+    if constexpr (std::is_polymorphic_v<T>) {
+      if (push_as_most_derived(L, p)) return;
+    }
+#endif
     if (push_remembered(L, p)) return;
 
     box_type *b = new_box(L, Ownership::borrowed, sizeof(box_type));
     b->ptr = p;
     b->live = true;
     remember(L, p);
+  }
+
+  // Hands Lua an object the host is giving up for good. The collector destroys
+  // it through the unique_ptr, so the host must not keep the raw address.
+  //
+  // This is the one push that cannot be reconciled with an existing userdata:
+  // if the object was already lent out as borrowed, there is a box saying
+  // nobody owns it and a fresh unique_ptr saying Lua does, and honouring
+  // either one corrupts the other. That is a host bug, so it says so.
+  static auto push_unique(core::State *L, std::unique_ptr<T> &&p) -> void {
+    if (!p) {
+      core::pushnil(L);
+      return;
+    }
+    if (already_known(L, p.get())) {
+      throw std::runtime_error(std::string("luakit: ") + Metatable<T>::k_name +
+                               " was handed over by unique_ptr while Lua already held a handle to it");
+    }
+
+    // The unique_ptr is released only once the box exists and cannot raise
+    // again, so a failed allocation leaves the caller still owning the object.
+    box_type *b = new_box(L, Ownership::unique, payload_offset<unique_type> + sizeof(unique_type));
+    T *raw = p.get();
+    new (payload_of<unique_type>(b)) unique_type(std::move(p));
+    b->ptr = raw;
+    b->live = true;
+    remember(L, raw);
   }
 
   // Shares ownership, so neither side has to outlive the other.
@@ -372,23 +473,41 @@ struct Userdata {
   //
   // Only borrowed boxes are severed. An owned box holds the object inside
   // itself, and marking it dead would skip the destructor; a shared box has a
-  // count that keeps the object alive regardless.
+  // count that keeps the object alive regardless. Called on either, this is a
+  // no-op -- including the cache entry, which must survive: dropping it while
+  // the object is still alive would mint a second userdata on the next push,
+  // so `a == b` would stop holding and any field a script had stashed on it
+  // would silently vanish.
   static auto invalidate(core::State *L, T *p) -> void {
     if (!p) return;
     push_cache(L);  // [cache]
 
+    bool severed = false;
     if (core::rawgetp(L, -1, p) == core::TUSERDATA) {  // [cache, ud]
       auto *b = static_cast<box_type *>(core::touserdata(L, -1));
       if (b->mode == Ownership::borrowed) {
         b->live = false;
         b->ptr = nullptr;
+        severed = true;
       }
     }
     core::pop(L, 1);  // [cache]
 
-    core::pushnil(L);
-    core::rawsetp(L, -2, p);
+    // The entry goes only once the box behind it is dead, so the address can
+    // be reused without inheriting the old box.
+    if (severed) {
+      core::pushnil(L);
+      core::rawsetp(L, -2, p);
+    }
     core::pop(L, 1);
+  }
+
+  // Whether T can stand in for the type `want` names -- itself, or any of its
+  // declared bases. Consulted by the most-derived-type resolution above.
+  static constexpr auto reaches(const void *want) noexcept -> bool {
+    if (want == detail::type_key<T>()) return true;
+    using bases = typename detail::all_bases<T>::type;
+    return reaches_any(want, static_cast<bases *>(nullptr));
   }
 
   // A finalizer must never raise.
@@ -403,6 +522,9 @@ struct Userdata {
         break;
       case Ownership::shared:
         std::destroy_at(payload_of<shared_type>(b));
+        break;
+      case Ownership::unique:
+        std::destroy_at(payload_of<unique_type>(b));  // deletes the object
         break;
       case Ownership::borrowed:
         break;  // the host's object, and none of our business
@@ -457,6 +579,11 @@ struct Userdata {
 
     inherit_from_bases(L, own);
     record_casts(L, mt);
+#if LUAKIT_HAS_RTTI
+    if constexpr (std::is_polymorphic_v<T>) {
+      record_pusher(L);
+    }
+#endif
 
     // Kept so a class deriving from this one can copy them down. Under light
     // userdata keys, which nothing written from Lua can collide with.
@@ -600,6 +727,50 @@ struct Userdata {
     const int casts = core::gettop(L);
     write_casts(L, casts, static_cast<bases *>(nullptr));
     core::rawsetp(L, mt, detail::casts_key());
+  }
+
+  // maybe_unused because a class with no bases expands the fold to nothing.
+  template <typename... Bs>
+  static constexpr auto reaches_any([[maybe_unused]] const void *want, Bases<Bs...> *) noexcept -> bool {
+    return ((want == detail::type_key<Bs>()) || ...);
+  }
+
+#if LUAKIT_HAS_RTTI
+  // Announces T as something a base-typed push can be resolved to.
+  static auto record_pusher(core::State *L) -> void {
+    detail::push_pushers(L);  // [pushers]
+    core::pushstring(L, typeid(T).name());
+    core::pushlightuserdata(L, reinterpret_cast<void *>(&detail::push_most_derived<T>));
+    core::rawset(L, -3);
+    core::pop(L, 1);
+  }
+
+  // Pushes p as its most derived registered type, or answers false and leaves
+  // the stack alone so the caller can push it as T.
+  //
+  // The common case -- the object really is a T -- costs one typeid comparison
+  // and no Lua work at all.
+  static auto push_as_most_derived(core::State *L, T *p) -> bool {
+    const std::type_info &actual = typeid(*p);
+    if (actual == typeid(T)) return false;
+
+    detail::push_pushers(L);  // [pushers]
+    core::pushstring(L, actual.name());
+    const bool found = core::rawget(L, -2) == core::TLIGHTUSERDATA;  // [pushers, entry]
+    auto *slot = found ? core::touserdata(L, -1) : nullptr;
+    core::pop(L, 2);
+
+    if (!slot) return false;
+    return reinterpret_cast<detail::Pusher>(slot)(L, dynamic_cast<void *>(p), detail::type_key<T>());
+  }
+#endif
+
+  // Whether some userdata already stands for p, without pushing it.
+  static auto already_known(core::State *L, T *p) -> bool {
+    push_cache(L);
+    const bool present = core::rawgetp(L, -1, p) == core::TUSERDATA;
+    core::pop(L, 2);
+    return present;
   }
 
   // Looks for a recorded conversion from the value's own class to T.
@@ -763,5 +934,20 @@ struct Userdata {
     core::pop(L, 1);  // [ud]
   }
 };
+
+namespace detail {
+
+// Defined out of line: it needs Userdata<D>, which needs this declared.
+//
+// No recursion to worry about. push_ref re-enters the resolution, but by then
+// typeid(*p) is typeid(D) and it stops on the first comparison.
+template <typename D>
+auto push_most_derived(core::State *L, void *most_derived, const void *want) -> bool {
+  if (!Userdata<D>::reaches(want)) return false;
+  Userdata<D>::push_ref(L, static_cast<D *>(most_derived));
+  return true;
+}
+
+}  // namespace detail
 
 }  // namespace luakit

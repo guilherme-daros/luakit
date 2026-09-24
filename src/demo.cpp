@@ -5,11 +5,13 @@
 #include "luakit/callback.hpp"
 #include "luakit/coroutine.hpp"
 
+#include "luakit/interpreter.hpp"
 #include "packages/luna.hpp"
 #include "packages/tracker.hpp"
 #include "packages/world/world.hpp"
 
 #include <cstdio>
+#include <string>
 
 namespace core = luakit::core;
 
@@ -75,10 +77,17 @@ auto reload_plugin(luakit::Interpreter &lua) -> void {
   std::printf("[C++] the population survived it: %d\n", world::population());
 }
 
+auto open_packages(luakit::Interpreter &interpreter) -> void {
+  const luakit::Module packages[] = {mod::luna(), mod::tracker(), mod::world()};
+
+  for (const auto &package : packages) interpreter.preload(package);
+  for (const auto &package : packages) {
+    interpreter.script(std::string("require('") + package.name + "')");
+  }
+}
+
 auto run(luakit::Interpreter &interpreter) -> void {
   auto session = WorldSession();
-
-  interpreter.openlibs();
 
   interpreter.preload(mod::luna());
   interpreter.preload(mod::tracker());

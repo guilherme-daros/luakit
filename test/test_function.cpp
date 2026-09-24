@@ -19,7 +19,7 @@ auto test_multi_return() -> void {
 auto test_exception_boundary() -> void {
   t::section("C++ exception boundary");
   Fixture f;
-  CHECK(contains(eval(f.L, "m.boom()"), "[guard]"));
+  CHECK(contains(eval(f.L, "m.boom()"), "luakit: C++ exception:"));
   CHECK(contains(eval(f.L, "m.boom()"), "from C++"));
   CHECK(contains(eval(f.L, "m.boom_unknown()"), "unknown C++ exception"));
 }

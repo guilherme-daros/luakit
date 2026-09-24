@@ -74,11 +74,6 @@ auto forward_arg(T &v) -> stack_key_t<A> && {
   return std::forward<stack_key_t<A>>(v);
 }
 
-template <typename>
-struct is_tuple : std::false_type {};
-template <typename... Ts>
-struct is_tuple<std::tuple<Ts...>> : std::true_type {};
-
 template <typename... Ts>
 auto push_all(core::State *L, const std::tuple<Ts...> &t) -> int {
   int n = 0;
@@ -112,15 +107,30 @@ auto free_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) ->
   // raise a Lua error, so the tuple can never be longjmp'd over.
   std::tuple<stack_key_t<A>...> args{Stack<stack_key_t<A>>::get(L, static_cast<int>(I) + 1)...};
 
-  return invoke_and_push<R>(L, [&] { return F(forward_arg<A>(std::get<I>(args))...); });
+  // The return type is written out rather than deduced: `auto` would decay a
+  // `T &` return to `T` and silently ask for a copy, which for a class Lua
+  // holds by address is both wrong and often not even possible.
+  return invoke_and_push<R>(L, [&]() -> R { return F(forward_arg<A>(std::get<I>(args))...); });
 }
 
+// The is-it-the-right-shape check is a static_assert plus an if constexpr
+// rather than a constraint, so the one line that explains the mistake is not
+// buried under "incomplete type signature<...>" from every use downstream.
 template <auto F>
 auto free_impl(core::State *L) -> int {
-  using sig = signature<decltype(F)>;
-  using args = typename sig::args;
-  return free_call<F, typename sig::ret>(L, static_cast<args *>(nullptr),
-                                         std::make_index_sequence<std::tuple_size_v<args>>{});
+  constexpr bool ok = std::is_function_v<std::remove_pointer_t<decltype(F)>>;
+  static_assert(ok,
+                "luakit: fn<> takes a pointer to a free function. For a member function use "
+                "method<>, for a data member use prop<> or ro_prop<>.");
+
+  if constexpr (ok) {
+    using sig = signature<decltype(F)>;
+    using args = typename sig::args;
+    return free_call<F, typename sig::ret>(L, static_cast<args *>(nullptr),
+                                           std::make_index_sequence<std::tuple_size_v<args>>{});
+  } else {
+    return 0;
+  }
 }
 
 template <auto M, typename R, typename C, typename... A, std::size_t... I>
@@ -133,17 +143,29 @@ auto method_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) 
   C *self = Stack<C *>::get(L, 1);
   std::tuple<stack_key_t<A>...> args{Stack<stack_key_t<A>>::get(L, static_cast<int>(I) + 2)...};
 
-  // A method returning C& is the chaining idiom: hand back the receiver that
-  // is already on the stack rather than trying to re-wrap it.
+  // A method returning C& is usually the chaining idiom, and then the receiver
+  // is already on the stack: hand that back rather than re-wrapping it.
+  //
+  // It is not always chaining, though. `Node &Node::child(int)` returns a
+  // different object of the same class, and that is an ordinary thing for an
+  // engine API to do, so it is lent the normal way instead of being refused.
+  // The identity cache means a script that has seen the object before gets the
+  // same userdata back, with whatever it stashed on it.
   if constexpr (std::is_lvalue_reference_v<R> && std::is_same_v<std::remove_cv_t<std::remove_reference_t<R>>, C>) {
-    C *returned = &(self->*M)(forward_arg<A>(std::get<I>(args))...);
-    if (returned != self) {
-      core::aux::error(L, "luakit: method returned a different object than self");
+    // auto, because R may be `const C &`: a getter handing back a reference to
+    // a member is the same shape. const is erased on the way into Lua either
+    // way -- see the Stack<const T &> comment for why.
+    auto *returned = &(self->*M)(forward_arg<A>(std::get<I>(args))...);
+    if (returned == self) {
+      core::settop(L, 1);
+      return 1;
     }
-    core::settop(L, 1);
+    Userdata<C>::push_ref(L, const_cast<C *>(returned));
     return 1;
   } else {
-    return invoke_and_push<R>(L, [&] { return (self->*M)(forward_arg<A>(std::get<I>(args))...); });
+    // Spelled out for the same reason as in free_call: a deduced `auto` would
+    // decay a `T &` return -- `Node &Node::child(int)` -- into a copy.
+    return invoke_and_push<R>(L, [&]() -> R { return (self->*M)(forward_arg<A>(std::get<I>(args))...); });
   }
 }
 
@@ -172,10 +194,19 @@ auto ctor_impl(core::State *L) -> int {
 
 template <auto M>
 auto method_impl(core::State *L) -> int {
-  using sig = signature<decltype(M)>;
-  using args = typename sig::args;
-  return method_call<M, typename sig::ret, typename sig::cls>(L, static_cast<args *>(nullptr),
-                                                              std::make_index_sequence<std::tuple_size_v<args>>{});
+  constexpr bool ok = std::is_member_function_pointer_v<decltype(M)>;
+  static_assert(ok,
+                "luakit: method<> takes a pointer to a member function. For a data member exposed "
+                "as a field, use prop<> or ro_prop<>; for a computed one, accessor<>.");
+
+  if constexpr (ok) {
+    using sig = signature<decltype(M)>;
+    using args = typename sig::args;
+    return method_call<M, typename sig::ret, typename sig::cls>(L, static_cast<args *>(nullptr),
+                                                                std::make_index_sequence<std::tuple_size_v<args>>{});
+  } else {
+    return 0;
+  }
 }
 
 }  // namespace detail

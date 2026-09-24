@@ -64,7 +64,7 @@ struct luakit::Metatable<tracker::Tracker> {
 auto luaopen_tracker(core::State *L) -> int {
   using namespace tracker;
 
-  return luakit::Class<Tracker>(L)
+  return luakit::Class<Tracker>(L, "tracker")
       .method<&Tracker::add>("add")
       .method<&Tracker::mean>("mean")
       .method<&Tracker::max>("max")

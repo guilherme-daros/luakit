@@ -18,22 +18,9 @@ namespace luakit {
 
 namespace detail {
 
-// How many Lua results a C++ return type asks for.
-template <typename R>
-inline constexpr int result_count = 1;
-template <>
-inline constexpr int result_count<void> = 0;
-template <typename... Ts>
-inline constexpr int result_count<std::tuple<Ts...>> = static_cast<int>(sizeof...(Ts));
-
-// Whether reading a result would produce a view into the Lua stack. A tuple
-// borrows if any of its elements does.
-template <typename R>
-inline constexpr bool result_borrows = Stack<R>::borrows;
-template <>
-inline constexpr bool result_borrows<void> = false;
-template <typename... Ts>
-inline constexpr bool result_borrows<std::tuple<Ts...>> = (Stack<Ts>::borrows || ...);
+// result_count, result_borrows and read_results live in stack.hpp, so that
+// Coroutine::resume and Interpreter::eval read a call's results by exactly the
+// same rules this does.
 
 // The interpreter's main thread, read out of the registry.
 inline auto main_thread(core::State *L) noexcept -> core::State * {
@@ -100,6 +87,7 @@ class Function {
                   "them. Use std::string.");
 
     if (!valid()) throw Error("luakit: call on an empty Function");
+    if (!ref_.state_open()) throw Error("luakit: call on a Function whose interpreter has been closed");
 
     // Room for the function, its arguments, and the handler call_traced slips
     // underneath them. Reserving up front turns the one raise that is at all
@@ -118,17 +106,12 @@ class Function {
     int nargs = 0;
     ((nargs += Stack<detail::stack_key_t<Args>>::push(L, std::forward<Args>(args))), ...);
 
+    detail::arm_budget(L);
     if (detail::call_traced(L, nargs, detail::result_count<R>) != core::OK) {
-      throw Error("luakit: " + detail::take_error(L));
+      throw detail::traced_error(L, "luakit");
     }
 
-    if constexpr (std::is_void_v<R>) {
-      return;
-    } else if constexpr (detail::is_tuple<R>::value) {
-      return read_tuple<R>(L, base, std::make_index_sequence<std::tuple_size_v<R>>{});
-    } else {
-      return detail::read_result<R>(L, base + 1);
-    }
+    return detail::read_results<R>(L, base);
   }
 
   // Pushes the function onto L. Returns its type, or TNIL when empty.
@@ -144,13 +127,6 @@ class Function {
 
  private:
   explicit Function(Ref r) : main_(r.valid() ? detail::main_thread(r.state()) : nullptr), ref_(std::move(r)) {}
-
-  // Braced init is ordered, so results are read left to right, and a mismatch
-  // part way through unwinds the elements already built.
-  template <typename Tup, std::size_t... I>
-  static auto read_tuple(core::State *L, int base, std::index_sequence<I...>) -> Tup {
-    return Tup{detail::read_result<std::tuple_element_t<I, Tup>>(L, base + 1 + static_cast<int>(I))...};
-  }
 
   core::State *main_ = nullptr;
   Ref ref_;

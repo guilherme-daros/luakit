@@ -224,7 +224,7 @@ auto luaopen_world(core::State *L) -> int {
   register_entity(L);
   register_creature(L);
 
-  return luakit::Library(L)
+  return luakit::Library(L, "world")
       .fn<spawn>("spawn")
       .fn<find>("find")
       .fn<summon>("summon")
@@ -232,12 +232,13 @@ auto luaopen_world(core::State *L) -> int {
       .fn<census>("census")
       .fn<spawn_many>("spawn_many")
       .fn<opposite>("opposite")
+      .enum_<Facing>("Facing")
       .fn<configure>("configure")
       .fn<world::log>("log")  // qualified: unqualified log is ambiguous with ::log(double)
       .fn<on_tick>("on_tick")
-      .raw_fn("wait", luakit::yielding<wait>)
+      .yielding_fn<wait>("wait")
       .overload<static_cast<double (*)(Vec2, Vec2)>(distance),
                 static_cast<double (*)(Creature *, Creature *)>(distance)>("distance")
-      .raw_fn("vec2", luakit::ctor_overload<Vec2, luakit::Args<>, luakit::Args<double, double>>)
+      .ctors<Vec2, luakit::Args<>, luakit::Args<double, double>>("vec2")
       .build_module();
 }

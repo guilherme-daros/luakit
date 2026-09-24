@@ -5,7 +5,7 @@
 namespace world {
 
 auto register_entity(luakit::core::State *L) -> void {
-  luakit::Class<Entity>(L)
+  luakit::Class<Entity>(L, "world")
       .method<&Entity::move_by>("move_by")
       .ro_prop<&Entity::name>("name")
       .prop<&Entity::position>("position")

@@ -31,11 +31,37 @@ auto args_match(core::State *L, int first, std::index_sequence<I...>) noexcept -
   return (Stack<stack_key_t<A>>::test(L, first + static_cast<int>(I)) && ...);
 }
 
-// One candidate in a set. `matches` decides, `call` does the work; both are
-// generated from the same signature, so they cannot drift apart.
+// Renders a signature as "(number, string)" for a diagnostic, built on the Lua
+// stack so that nothing with a destructor is alive when the error longjmps.
+//
+// An empty pack gives "()", which is the right thing for a no-argument arm.
+template <typename... A>
+auto describe_args(core::State *L) -> void {
+  core::pushliteral(L, "(");
+  int pieces = 1;
+
+  (
+      [&] {
+        if (pieces > 1) {
+          core::pushliteral(L, ", ");
+          ++pieces;
+        }
+        core::pushstring(L, Stack<stack_key_t<A>>::name);
+        ++pieces;
+      }(),
+      ...);
+
+  core::pushliteral(L, ")");
+  core::concat(L, pieces + 1);
+}
+
+// One candidate in a set. `matches` decides, `call` does the work, `describe`
+// says what it wanted when nothing matched; all three are generated from the
+// same signature, so they cannot drift apart.
 struct Arm {
   bool (*matches)(core::State *L) noexcept;
   int (*call)(core::State *L);
+  void (*describe)(core::State *L);
 };
 
 template <typename... A>
@@ -45,7 +71,7 @@ auto free_matches(core::State *L) noexcept -> bool {
 
 template <auto F, typename... A>
 constexpr auto free_arm_for(std::tuple<A...> *) -> Arm {
-  return {&free_matches<A...>, &free_impl<F>};
+  return {&free_matches<A...>, &free_impl<F>, &describe_args<A...>};
 }
 
 template <auto F>
@@ -65,7 +91,7 @@ auto method_matches(core::State *L) noexcept -> bool {
 
 template <auto M, typename C, typename... A>
 constexpr auto method_arm_for(std::tuple<A...> *) -> Arm {
-  return {&method_matches<C, A...>, &method_impl<M>};
+  return {&method_matches<C, A...>, &method_impl<M>, &describe_args<A...>};
 }
 
 template <auto M>
@@ -76,7 +102,7 @@ constexpr auto method_arm() -> Arm {
 
 template <typename T, typename... A>
 constexpr auto ctor_arm() -> Arm {
-  return {&free_matches<A...>, &ctor_impl<T, A...>};
+  return {&free_matches<A...>, &ctor_impl<T, A...>, &describe_args<A...>};
 }
 
 template <typename T, typename... A>
@@ -93,9 +119,26 @@ auto overload_impl(core::State *L) -> int {
   const bool handled = ((Arms.matches(L) ? (result = Arms.call(L), true) : false) || ...);
   if (handled) return result;
 
-  // Nothing matched. Listing what was received beats "bad argument #1",
-  // because with an overload set there is no single argument at fault.
-  return core::aux::error(L, "luakit: no overload matches the %d argument(s) given", core::gettop(L));
+  // Nothing matched. With an overload set there is no single argument at
+  // fault, so "bad argument #1" would be a guess; the candidates are what the
+  // caller actually needs in order to see which one they nearly wrote.
+  const int given = core::gettop(L);
+  core::pushfstring(L, "luakit: no overload matches the %d argument(s) given. Candidates: ", given);
+
+  int pieces = 1;
+  (
+      [&] {
+        if (pieces > 1) {
+          core::pushliteral(L, ", ");
+          ++pieces;
+        }
+        Arms.describe(L);
+        ++pieces;
+      }(),
+      ...);
+
+  core::concat(L, pieces);
+  return core::error(L);
 }
 
 }  // namespace detail

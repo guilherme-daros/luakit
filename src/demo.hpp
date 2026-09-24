@@ -10,4 +10,9 @@ namespace demo {
 
 auto run(luakit::Interpreter &interpreter) -> void;
 
+// Preloads every package and then requires each one, so the luaopen_ functions
+// actually run. main.cpp's --emit-defs needs that: a class describes itself at
+// the point it registers, and nothing is described before.
+auto open_packages(luakit::Interpreter &interpreter) -> void;
+
 }  // namespace demo

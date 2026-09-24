@@ -8,17 +8,33 @@
 
 #include "luakit/core/api.hpp"
 
+#include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 
 namespace luakit {
 
 // Thrown for failures on the host side: loading a chunk, running it, or
 // creating the interpreter. Errors raised *inside* Lua arrive as the message
 // of one of these after a failed pcall.
+//
+// what() carries the traceback appended, which is what a fatal handler wants
+// to print. traceback() carries it on its own, which is what a host that logs
+// the frames somewhere separate from the one-line message wants. It is empty
+// for a failure that never reached Lua, such as a chunk that would not load.
 class Error : public std::runtime_error {
  public:
   using std::runtime_error::runtime_error;
+
+  Error(const std::string &message, std::string frames)
+      : std::runtime_error(frames.empty() ? message : message + "\n" + frames), traceback_(std::move(frames)) {}
+
+  auto traceback() const noexcept -> const std::string & { return traceback_; }
+
+ private:
+  std::string traceback_;
 };
 
 namespace detail {
@@ -79,6 +95,29 @@ inline auto take_error(core::State *L) -> std::string {
   std::string msg = err ? err : "?";
   core::pop(L, 1);
   return msg;
+}
+
+// Splits what traceback_handler produced back into the two halves it joined.
+//
+// The handler calls luaL_traceback, which writes "<message>\nstack
+// traceback:\n...". Rather than have the handler build something structured --
+// which would mean allocating a table on an error path, at the one moment the
+// state is least healthy -- the seam is simply found again here.
+inline auto split_traceback(std::string joined) -> std::pair<std::string, std::string> {
+  static constexpr std::string_view k_seam = "\nstack traceback:";
+  const std::size_t at = joined.find(k_seam);
+  if (at == std::string::npos) return {std::move(joined), {}};
+
+  std::string frames = joined.substr(at + 1);  // past the newline
+  joined.resize(at);
+  return {std::move(joined), std::move(frames)};
+}
+
+// Pops a failed call's error value and turns it into an Error, keeping the
+// traceback reachable on its own.
+inline auto traced_error(core::State *L, const char *what) -> Error {
+  auto [message, frames] = split_traceback(take_error(L));
+  return Error(std::string(what) + ": " + message, std::move(frames));
 }
 
 }  // namespace detail

@@ -68,8 +68,14 @@ class Coroutine {
   // Resumes the coroutine, passing args as the function's parameters on the
   // first call and as the results of coroutine.yield() on later ones.
   //
-  //   R = void  ->  bool, true while the coroutine is still suspended
-  //   R = T     ->  std::optional<T>, nullopt once it has finished
+  //   R = void          ->  bool, true while the coroutine is still suspended
+  //   R = T             ->  std::optional<T>, nullopt once it has finished
+  //   R = tuple<A, B>   ->  optional<tuple<A, B>>, from a two-value yield
+  //
+  // A tuple means several yielded values, exactly as it means several results
+  // in Function::call. It used to mean one yielded *table* here, which was the
+  // same spelling for the opposite thing, and left a multi-value yield with no
+  // spelling at all short of reading raw() by hand.
   //
   // An error inside the coroutine throws Error, which also marks it finished.
   template <typename R = void, typename... Args>
@@ -77,24 +83,24 @@ class Coroutine {
     // The yielded values have to come off the thread's stack before the next
     // resume, so anything R borrows from them would dangle the moment this
     // function returns. Copying types only.
-    if constexpr (!std::is_void_v<R>) {
-      static_assert(!Stack<R>::borrows,
-                    "luakit: Coroutine::resume cannot return a borrowed type. The yielded value is "
-                    "removed from the thread before resume returns, so a std::string_view, const "
-                    "char * or registered-class pointer would outlive it. Use std::string, or read "
-                    "the value off raw() yourself.");
-    }
+    static_assert(!detail::result_borrows<R>,
+                  "luakit: Coroutine::resume cannot return a borrowed type. The yielded value is "
+                  "removed from the thread before resume returns, so a std::string_view, const "
+                  "char * or registered-class pointer would outlive it. Use std::string, or read "
+                  "the value off raw() yourself.");
 
     if (done()) return stop<R>();
 
     (Stack<detail::stack_key_t<Args>>::push(co_, std::forward<Args>(args)), ...);
 
     int nresults = 0;
+    detail::arm_budget(co_);
     const int st = core::resume(co_, host_, static_cast<int>(sizeof...(Args)), &nresults);
 
     if (st != core::OK && st != core::YIELD) {
       finished_ = true;
-      throw Error("coroutine failed: " + take_message());
+      auto [message, frames] = detail::split_traceback(take_message());
+      throw Error("coroutine failed: " + message, std::move(frames));
     }
 
     if (st == core::OK) {  // ran to completion
@@ -107,23 +113,26 @@ class Coroutine {
       core::settop(co_, 0);
       return true;
     } else {
-      if (nresults < 1) {
+      constexpr int want = detail::result_count<R>;
+      if (nresults < want) {
+        const int got = nresults;
         core::settop(co_, 0);
-        throw Error("coroutine yielded no value");
+        throw Error("coroutine yielded " + std::to_string(got) + " value(s), expected " + std::to_string(want));
       }
-      // Deliberately test rather than check: a failed Stack<T>::check raises a
-      // Lua error, and there is no protected call above us here to catch the
-      // longjmp -- it would reach the panic handler and abort.
-      const int first = -nresults;
-      if (!Stack<R>::test(co_, first)) {
-        const std::string got = core::aux::typename_(co_, first);
+
+      // read_results goes through Stack<T>::test rather than ::check, which
+      // matters here: a failed check raises a Lua error, and there is no
+      // protected call above us to catch the longjmp -- it would reach the
+      // panic handler and abort. A mismatch arrives as a thrown Error instead.
+      const int base = core::gettop(co_) - nresults;
+      try {
+        R out = detail::read_results<R>(co_, base);
+        core::settop(co_, 0);  // Lua requires the results be gone before the next resume
+        return out;
+      } catch (...) {
         core::settop(co_, 0);
-        throw Error(std::string("coroutine yielded a ") + got + ", expected " + Stack<R>::name);
+        throw;
       }
-      R out = Stack<R>::get(co_, first);
-      // Lua requires the results be removed before the next resume.
-      core::settop(co_, 0);
-      return out;
     }
   }
 
@@ -162,10 +171,12 @@ class Coroutine {
 
   // A destructor must not throw, so closethread's status is ignored. Closing
   // first gives any pending <close> variables a deterministic run, which
-  // releasing the anchor alone would not.
+  // releasing the anchor alone would not -- but only while the interpreter is
+  // still open. Once it is gone the thread went with it, and there is nothing
+  // left to close.
   auto release() noexcept -> void {
     if (!anchor_) return;
-    if (co_) core::closethread(co_, host_);
+    if (co_ && anchor_.state_open()) core::closethread(co_, host_);
     anchor_.reset();
     host_ = nullptr;
     co_ = nullptr;

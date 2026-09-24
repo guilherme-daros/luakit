@@ -41,6 +41,22 @@ struct EnumEntry {
 template <typename E>
 concept NamedEnum = std::is_enum_v<E> && requires { EnumNames<E>::k_values; };
 
+// Pushes { north = "north", south = "south", ... }, so a script can write
+// world.Facing.north and find out what the alternatives are by looking rather
+// than by misspelling one and reading the error.
+//
+// The values are the strings themselves, because that is what an enum *is* on
+// the Lua side: `c.facing = world.Facing.north` and `c.facing = "north"` are
+// the same assignment, and neither is more correct than the other.
+template <NamedEnum E>
+auto push_enum_table(core::State *L) -> void {
+  core::createtable(L, 0, static_cast<int>(std::size(EnumNames<E>::k_values)));
+  for (const auto &entry : EnumNames<E>::k_values) {
+    core::pushstring(L, entry.name);
+    core::setfield(L, -2, entry.name);
+  }
+}
+
 template <NamedEnum E>
 struct Stack<E> {
   static_assert(std::size(EnumNames<E>::k_values) > 0, "luakit: EnumNames<E>::k_values must name at least one value");

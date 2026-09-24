@@ -7,7 +7,10 @@
 
 namespace luakit {
 
-static constexpr const char *k_guard_prefix = "[guard] ";
+// Every diagnostic the library raises starts "luakit: ", so that a script
+// author can tell at a glance whether a message came from the binding layer or
+// from Lua. This one says which kind it was as well.
+static constexpr const char *k_guard_prefix = "luakit: C++ exception: ";
 
 // A C++ exception unwinding through Lua's C frames is undefined behaviour, so
 // every function handed to Lua goes through this. aux::error is called outside

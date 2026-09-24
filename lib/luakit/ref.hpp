@@ -3,7 +3,9 @@
 #pragma once
 
 #include "luakit/core/api.hpp"
+#include "luakit/state.hpp"
 
+#include <memory>
 #include <utility>
 
 namespace luakit {
@@ -18,10 +20,14 @@ namespace luakit {
 // free a slot that luaL_ref has since handed to someone else, so two unrelated
 // handles would silently alias.
 //
-// The state must outlive the Ref: releasing touches the registry, and there is
-// no way to detect a lua_State that has already been closed. In practice that
-// means a Ref belongs to something owned by the Interpreter, or is cleared
-// before it goes.
+// A Ref made from an Interpreter's state survives that Interpreter being
+// closed: it takes a share of the control block (see state.hpp), and once that
+// says closed there is no registry left to give a key back to, so releasing
+// becomes a no-op instead of a use-after-free. Releasing early is still
+// tidier, and still what a host should do, but forgetting is no longer fatal.
+//
+// A Ref made from a lua_State luakit did not create has no block to consult,
+// and the older contract applies to it: that state must outlive the Ref.
 class Ref {
  public:
   Ref() = default;
@@ -37,12 +43,19 @@ class Ref {
 
   ~Ref() { release(); }
 
-  Ref(Ref &&other) noexcept : L_(std::exchange(other.L_, nullptr)), key_(std::exchange(other.key_, core::NOREF)) {}
+  Ref(Ref &&other) noexcept
+      : L_(std::exchange(other.L_, nullptr)),
+        handle_(std::move(other.handle_)),
+        key_(std::exchange(other.key_, core::NOREF)) {
+    other.handle_.reset();
+  }
 
   auto operator=(Ref &&other) noexcept -> Ref & {
     if (this != &other) {
       release();
       L_ = std::exchange(other.L_, nullptr);
+      handle_ = std::move(other.handle_);
+      other.handle_.reset();
       key_ = std::exchange(other.key_, core::NOREF);
     }
     return *this;
@@ -73,23 +86,37 @@ class Ref {
   // The state the value is anchored in.
   auto state() const noexcept -> core::State * { return L_; }
 
+  // Whether the interpreter this was anchored in is still open. False once it
+  // has been closed, which is what everything built on Ref checks before
+  // touching the state.
+  auto state_open() const noexcept -> bool { return L_ != nullptr && (!handle_ || handle_->open); }
+
   // Releases the anchor and leaves this empty. Idempotent.
   auto reset() noexcept -> void {
     release();
     L_ = nullptr;
+    handle_.reset();
     key_ = core::NOREF;
   }
 
  private:
-  explicit Ref(core::State *L) : L_(L), key_(core::aux::ref(L, core::REGISTRYINDEX)) {}
+  // Order matters: handle_ is read out of the registry before aux::ref pops
+  // the value being anchored. handle_of leaves the stack as it found it, so
+  // the value is still on top when ref runs.
+  explicit Ref(core::State *L) : L_(L), handle_(detail::handle_of(L)), key_(core::aux::ref(L, core::REGISTRYINDEX)) {}
 
-  // luaL_unref already ignores NOREF and REFNIL, so the only thing guarded
-  // here is the null state of a moved-from Ref.
+  // luaL_unref already ignores NOREF and REFNIL, so what is guarded here is
+  // the null state of a moved-from Ref, and the closed interpreter: once the
+  // lua_State is gone there is no registry to give the key back to, and asking
+  // would be the use-after-free this exists to prevent.
   auto release() noexcept -> void {
-    if (L_) core::aux::unref(L_, core::REGISTRYINDEX, key_);
+    if (!L_) return;
+    if (handle_ && !handle_->open) return;
+    core::aux::unref(L_, core::REGISTRYINDEX, key_);
   }
 
   core::State *L_ = nullptr;
+  std::shared_ptr<StateHandle> handle_;
   int key_ = core::NOREF;
 };
 

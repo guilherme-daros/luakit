@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace luakit {
 
@@ -160,6 +161,43 @@ class Table {
     return n;
   }
 
+  // Visits every entry whose key and value are both the requested types.
+  //
+  //   cfg.for_each<std::string, double>([](auto k, double v) { ... });
+  //
+  // Entries that do not match are skipped rather than reported. A plugin's
+  // configuration table is routinely heterogeneous -- string->number settings
+  // beside a string->function hook -- and a host reading the numbers out of
+  // one should not have to care about the rest. count() says how many entries
+  // there were in total if the difference matters.
+  template <typename K, typename V, typename F>
+  auto for_each(F &&fn) const -> void {
+    core::State *L = begin();
+    detail::StackRestore restore(L, core::gettop(L) - 1);
+    if (!core::checkstack(L, 4)) throw Error("luakit: cannot grow the Lua stack");
+
+    core::pushnil(L);
+    while (core::next(L, -2)) {  // [t, k, v]
+      core::pushvalue(L, -2);    // [t, k, v, k-copy]
+
+      // The copy is not optional. Reading a number key as a string converts
+      // the slot in place, which is documented Lua behaviour and also breaks
+      // the traversal: the next lua_next fails with "invalid key to 'next'".
+      if (Stack<K>::test(L, -1) && Stack<V>::test(L, -2)) {
+        fn(Stack<K>::get(L, -1), Stack<V>::get(L, -2));
+      }
+      core::pop(L, 2);  // [t, k]
+    }
+  }
+
+  // Every key of the given type, in Lua's own iteration order.
+  template <typename K>
+  auto keys() const -> std::vector<K> {
+    std::vector<K> out;
+    for_each<K, Ref>([&](K k, const Ref &) { out.push_back(std::move(k)); });
+    return out;
+  }
+
   auto push(core::State *L) const -> int { return ref_.push(L); }
   auto state() const noexcept -> core::State * { return ref_.state(); }
   auto reset() noexcept -> void { ref_.reset(); }
@@ -173,6 +211,7 @@ class Table {
   auto begin() const -> core::State * {
     core::State *L = ref_.state();
     if (!L) throw Error("luakit: operation on an empty Table");
+    if (!ref_.state_open()) throw Error("luakit: operation on a Table whose interpreter has been closed");
     if (!core::checkstack(L, 3)) throw Error("luakit: cannot grow the Lua stack");
     ref_.push(L);
     return L;

@@ -36,5 +36,10 @@ auto boom() -> void {
 auto luaopen_luna(core::State *L) -> int {
   using namespace luna;
 
-  return luakit::Library(L).fn<sum>("sum").fn<greet>("greet").fn<scale>("scale").fn<boom>("boom").build_module();
+  return luakit::Library(L, "luna")
+      .fn<sum>("sum")
+      .fn<greet>("greet")
+      .fn<scale>("scale")
+      .fn<boom>("boom")
+      .build_module();
 }

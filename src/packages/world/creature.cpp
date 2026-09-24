@@ -5,7 +5,7 @@
 namespace world {
 
 auto register_creature(luakit::core::State *L) -> void {
-  luakit::Class<Creature>(L)
+  luakit::Class<Creature>(L, "world")
       .method<&Creature::damage>("damage")
       .accessor<&Creature::health, &Creature::set_health>("hp")
       .accessor<&Creature::facing, &Creature::set_facing>("facing")

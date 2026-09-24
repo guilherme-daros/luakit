@@ -2,6 +2,7 @@
 
 #include "luakit/core/api.hpp"
 #include "luakit/error.hpp"
+#include "luakit/ref.hpp"
 #include "luakit/userdata.hpp"
 
 #include <array>
@@ -11,12 +12,14 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -445,6 +448,49 @@ auto map_push(core::State *L, const M &m) -> int {
   return 1;
 }
 
+// ---------------------------------------------------------------- sets
+//
+// A set crosses as a sequence table, { e1, ..., eN }, the same shape a vector
+// uses: a mod writing `world.despawn({"rat", "bat"})` should not have to know
+// which container the host chose. Duplicates in the table collapse, which is
+// what asking for a set means.
+
+template <typename S>
+struct SetLike {
+  using value_type = typename S::value_type;
+
+  static constexpr const char *name = "table";
+  static constexpr bool borrows = Stack<value_type>::borrows;
+
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<std::vector<value_type>>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Stack<std::vector<value_type>>::check(L, idx); }
+
+  static auto get(core::State *L, int idx) -> S {
+    const int at = core::absindex(L, idx);
+    const auto n = static_cast<core::Integer>(core::rawlen(L, at));
+    if (!core::checkstack(L, 2)) throw std::runtime_error("luakit: cannot grow Lua stack");
+
+    S out;
+    for (core::Integer i = 1; i <= n; ++i) {
+      core::rawgeti(L, at, i);
+      out.insert(Stack<value_type>::get(L, -1));  // may throw, unwinds normally
+      core::pop(L, 1);
+    }
+    return out;
+  }
+
+  static auto push(core::State *L, const S &s) -> int {
+    core::createtable(L, static_cast<int>(s.size()), 0);
+    const int t = core::gettop(L);
+    core::Integer i = 0;
+    for (const auto &v : s) {
+      Stack<value_type>::push(L, v);
+      core::rawseti(L, t, ++i);
+    }
+    return 1;
+  }
+};
+
 // The shared body of every map-like specialization.
 template <typename M>
 struct MapLike {
@@ -467,6 +513,15 @@ struct Stack<std::map<K, V, C, A>> : detail::MapLike<std::map<K, V, C, A>> {};
 
 template <typename K, typename V, typename H, typename E, typename A>
 struct Stack<std::unordered_map<K, V, H, E, A>> : detail::MapLike<std::unordered_map<K, V, H, E, A>> {};
+
+// A set of names or ids, as the sequence table a script would write by hand.
+// Iteration order is the container's, so std::set pushes sorted and
+// unordered_set does not.
+template <typename T, typename C, typename A>
+struct Stack<std::set<T, C, A>> : detail::SetLike<std::set<T, C, A>> {};
+
+template <typename T, typename H, typename E, typename A>
+struct Stack<std::unordered_set<T, H, E, A>> : detail::SetLike<std::unordered_set<T, H, E, A>> {};
 
 // A two-element sequence table, { first, second }. The readable way to move a
 // coordinate or a key-value pair across without inventing a class for it.
@@ -519,6 +574,44 @@ struct Stack<T &> {
   static auto get(core::State *L, int idx) noexcept -> T & { return *Stack<T *>::get(L, idx); }
   static auto push(core::State *L, T &v) -> int {
     Userdata<T>::push_ref(L, &v);
+    return 1;
+  }
+};
+
+// The const spellings of the two above.
+//
+// Lua has no const, so it is erased at the boundary: a script handed a
+// `const Entity *` can call any bound mutator on it. That is worth knowing,
+// and it is still much better than the alternative, which was that
+// `const Entity *find() const` simply would not compile -- quietly pushing a
+// host towards dropping const from its own API to satisfy the binding layer.
+//
+// Written out rather than folded into Stack<T *> because the constraint there
+// is `Registered T`, and Registered<const Entity> is false: nobody specializes
+// Metatable for a const type. So these deduce T without the cv and put it
+// back, which also keeps the two partial specializations unambiguous.
+template <Registered T>
+struct Stack<const T *> {
+  static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = true;
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> const T * { return Stack<T *>::get(L, idx); }
+  static auto push(core::State *L, const T *v) -> int {
+    Userdata<T>::push_ref(L, const_cast<T *>(v));
+    return 1;
+  }
+};
+
+template <Registered T>
+struct Stack<const T &> {
+  static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = true;
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+  static auto get(core::State *L, int idx) noexcept -> const T & { return *Stack<T *>::get(L, idx); }
+  static auto push(core::State *L, const T &v) -> int {
+    Userdata<T>::push_ref(L, const_cast<T *>(&v));
     return 1;
   }
 };
@@ -588,16 +681,83 @@ struct Stack<std::shared_ptr<T>> {
   }
 };
 
+// A unique_ptr hands the object over for good: the host built it, is done with
+// it, and the collector destroys it. This is the transfer case, and it is the
+// one returning T by value cannot express -- an Entity is typically neither
+// copyable nor movable, and it is already allocated somewhere else.
+//
+// Push only. Taking a unique_ptr *out* of Lua would mean tearing an object out
+// of a box that scripts may still hold handles to, which has no safe answer;
+// the diagnostic below says what to write instead.
+template <Registered T>
+struct Stack<std::unique_ptr<T>> {
+  static constexpr const char *name = Metatable<T>::k_name;
+  static constexpr bool borrows = false;
+
+  static auto test(core::State *L, int idx) noexcept -> bool { return Stack<T *>::test(L, idx); }
+  static auto check(core::State *L, int idx) -> void { Userdata<T>::check(L, idx); }
+
+  static auto get(core::State *, int) -> std::unique_ptr<T> {
+    static_assert(detail::always_false<T>,
+                  "luakit: a unique_ptr parameter would take ownership away from Lua, which may "
+                  "still hold handles to the object. Take T & or T * to borrow it, or "
+                  "std::shared_ptr<T> to share it.");
+    return {};
+  }
+
+  static auto push(core::State *L, std::unique_ptr<T> &&v) -> int {
+    Userdata<T>::push_unique(L, std::move(v));
+    return 1;
+  }
+};
+
+// Any Lua value at all, anchored so it keeps working after the call.
+//
+// Table and Function each have one of these; this is the same idea without the
+// type requirement, which is what a handler taking whatever a mod felt like
+// passing needs: `on_event(std::string name, luakit::Ref payload)`.
+template <>
+struct Stack<Ref> {
+  static constexpr const char *name = "any";
+
+  // False, for the same reason Table's and Function's are: the value lives in
+  // the registry from here on, not in the stack slot it came from.
+  static constexpr bool borrows = false;
+
+  // A missing argument is the one thing this refuses. Everything present is a
+  // value, including nil, and anchoring nil is meaningful -- it says the mod
+  // passed something and that something was nil.
+  static auto test(core::State *L, int idx) noexcept -> bool { return !core::isnone(L, idx); }
+  static auto check(core::State *L, int idx) -> void {
+    if (core::isnone(L, idx)) core::aux::argerror(L, idx, "value expected");
+  }
+
+  // On the contract: get() must not raise, and luaL_ref can, by failing to
+  // grow the registry. That is the out-of-memory case Userdata<T>::reserve
+  // documents; there is no allocation-free way to anchor a value.
+  static auto get(core::State *L, int idx) -> Ref { return Ref::at(L, idx); }
+
+  static auto push(core::State *L, const Ref &r) -> int {
+    r.push(L);
+    return 1;
+  }
+};
+
 namespace detail {
 
 // Which Stack<> specialization handles a value of type T. References to
 // registered classes stay references, so the object is lent rather than
 // copied; everything else decays, so `const std::string &` and `std::string`
 // share one specialization.
+//
+// The cv-qualifier is kept on a registered reference, so `const Vec2 &` maps
+// to Stack<const Vec2 &> rather than Stack<Vec2 &>. Without that, a getter
+// returning `const Vec2 &` -- an entirely ordinary thing to write -- failed to
+// compile, because the push took a non-const Vec2 &.
 template <typename T>
 using stack_key_t =
     std::conditional_t<std::is_lvalue_reference_v<T> && Registered<std::remove_cv_t<std::remove_reference_t<T>>>,
-                       std::remove_cv_t<std::remove_reference_t<T>> &, std::decay_t<T>>;
+                       std::remove_reference_t<T> &, std::decay_t<T>>;
 
 // Converts, or throws. The counterpart to luakit::get below, for host code:
 // a failed Stack<T>::check raises a Lua error, and a call from outside a
@@ -609,6 +769,60 @@ auto read_result(core::State *L, int idx) -> T {
                 " was expected");
   }
   return Stack<T>::get(L, idx);
+}
+
+template <typename>
+struct is_tuple : std::false_type {};
+template <typename... Ts>
+struct is_tuple<std::tuple<Ts...>> : std::true_type {};
+
+// ------------------------------------------------- results of a Lua call
+//
+// A tuple is the one type that means something different coming *back* from
+// Lua than it does going in. As a value it is a fixed-length sequence table,
+// like pair and array. As the result type of a call it means multiple Lua
+// results, because multiple returns are how Lua says it and there is no other
+// spelling available.
+//
+// These three say so once, and Function::call, Coroutine::resume and
+// Interpreter::eval all share them -- which is the point. They used to live in
+// callback.hpp, where only Function could reach them, and Coroutine::resume
+// went through Stack<R> instead: resume<std::tuple<int, int>> therefore meant
+// "one yielded table" while call<std::tuple<int, int>> meant "two results".
+// One type, one spelling, two opposite meanings.
+
+// How many Lua values a C++ result type asks for.
+template <typename R>
+inline constexpr int result_count = 1;
+template <>
+inline constexpr int result_count<void> = 0;
+template <typename... Ts>
+inline constexpr int result_count<std::tuple<Ts...>> = static_cast<int>(sizeof...(Ts));
+
+// Whether reading a result would produce a view into the Lua stack. A tuple
+// borrows if any of its elements does.
+template <typename R>
+inline constexpr bool result_borrows = Stack<R>::borrows;
+template <>
+inline constexpr bool result_borrows<void> = false;
+template <typename... Ts>
+inline constexpr bool result_borrows<std::tuple<Ts...>> = (Stack<Ts>::borrows || ...);
+
+// Reads result_count<R> values sitting at base+1 upwards.
+//
+// Braced init is ordered, so elements are read left to right and a mismatch
+// part way through unwinds the ones already built.
+template <typename R>
+auto read_results(core::State *L, int base) -> R {
+  if constexpr (std::is_void_v<R>) {
+    return;
+  } else if constexpr (is_tuple<R>::value) {
+    return [&]<std::size_t... I>(std::index_sequence<I...>) {
+      return R{read_result<std::tuple_element_t<I, R>>(L, base + 1 + static_cast<int>(I))...};
+    }(std::make_index_sequence<std::tuple_size_v<R>>{});
+  } else {
+    return read_result<R>(L, base + 1);
+  }
 }
 
 }  // namespace detail
