@@ -1,0 +1,113 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  # The matrix that matters: two compilers, and both the build type that reads
+  # lua/ from disk (Debug) and the one that bakes it in (Release). The Release
+  # half is the only configuration that exercises luac and xxd, so without it
+  # luakit_embed_dir is untested.
+  build:
+    name: ${{ matrix.compiler }} / ${{ matrix.build_type }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++, clang++]
+        build_type: [Debug, Release]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.4 and the embedding tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liblua5.4-dev lua5.4 xxd
+
+      - name: Configure
+        env:
+          CXX: ${{ matrix.compiler }}
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: cmake --build build -j
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Run the demo host
+        run: ./build/src/main > /dev/null
+
+      - name: Generated definitions are current
+        run: |
+          mkdir -p /tmp/defs
+          ./build/src/main --emit-defs /tmp/defs
+          diff -r lua/defs /tmp/defs
+
+  # RTTI off is a supported configuration -- plenty of game builds use it --
+  # and it takes a different path through push_ref, so it gets its own job
+  # rather than being assumed to work.
+  no-rtti:
+    name: g++ / no RTTI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y liblua5.4-dev lua5.4 xxd
+      - run: cmake -S . -B build -DCMAKE_CXX_FLAGS=-fno-rtti
+      - run: cmake --build build -j
+      - run: ctest --test-dir build --output-on-failure -E compile_fail
+
+  install:
+    name: find_package consumer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y liblua5.4-dev lua5.4 xxd
+
+      # An installed luakit has to work from a project that never saw this
+      # tree: the export set, FindLua54, and the embed helpers all move.
+      - name: Install
+        run: |
+          cmake -S . -B build -DCMAKE_INSTALL_PREFIX=/tmp/prefix
+          cmake --build build -j
+          cmake --install build
+
+      - name: Consume
+        run: |
+          mkdir -p /tmp/consumer
+          cd /tmp/consumer
+          cat > CMakeLists.txt <<'EOF'
+          cmake_minimum_required(VERSION 3.21)
+          project(consumer LANGUAGES CXX)
+          find_package(luakit REQUIRED)
+          add_executable(consumer main.cpp)
+          target_link_libraries(consumer PRIVATE luakit::luakit)
+          EOF
+          cat > main.cpp <<'EOF'
+          #include "luakit/interpreter.hpp"
+          #include "luakit/version.hpp"
+          #include <cstdio>
+          auto main() -> int {
+            luakit::Interpreter lua;
+            lua.openlibs();
+            std::printf("luakit %s says %d\n", luakit::version_string, lua.eval<int>("return 1 + 1"));
+          }
+          EOF
+          cmake -S . -B build -DCMAKE_PREFIX_PATH=/tmp/prefix
+          cmake --build build
+          ./build/consumer
+
+  format:
+    name: formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y liblua5.4-dev clang-format
+      - name: Install stylua
+        run: |
+          curl -sSL -o stylua.zip https://github.com/JohnnyMorganz/StyLua/releases/download/v0.20.0/stylua-linux-x86_64.zip
+          unzip -q stylua.zip && sudo mv stylua /usr/local/bin/
+      - run: cmake -S . -B build
+      - run: cmake --build build --target format-check
