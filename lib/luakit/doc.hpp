@@ -7,10 +7,10 @@
 // enough to emit `---@meta` definitions, and then `goblin.facing = "nrth"` is
 // an editor error instead of a runtime one.
 //
-// Nothing here costs anything at registration time beyond pushing a name and a
-// function pointer into a vector: the type names are rendered only when
-// something actually asks to emit. So a shipping binary can carry --emit-defs
-// rather than needing a separate build.
+// Registration records a name and a function pointer per member, and copies a
+// handful of strings per class; the type names themselves are rendered only
+// when something asks to emit. Cheap enough that a shipping binary can carry
+// --emit-defs rather than needing a separate build.
 
 #pragma once
 
@@ -169,7 +169,8 @@ struct Signature {
   bool varargs = false;
 };
 
-// Filled on demand, so registration itself builds no strings.
+// A signature is rendered only when asked for, so registering a member costs
+// one of these rather than the strings it would produce.
 using Describe = void (*)(Signature &);
 
 template <typename... A>

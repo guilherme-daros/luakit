@@ -155,10 +155,9 @@ class Class {
 
   // An enum's names, as a table in the module: `world.Facing.north`.
   //
-  // The valid spellings of an enum were previously knowable only by
-  // misspelling one and reading the error that listed them. This puts them
-  // where a script can see them, and where the definition generator can turn
-  // them into a literal union the editor checks.
+  // Puts the valid spellings where a script can see them, rather than leaving
+  // them knowable only by misspelling one and reading the error that lists
+  // them. The definition generator turns the same set into a literal union.
   template <typename E>
   auto enum_(const char *name) -> Class & {
     tables_.push_back({name, &push_enum_table<E>});

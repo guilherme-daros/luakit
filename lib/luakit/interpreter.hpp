@@ -156,9 +156,9 @@ class Interpreter {
   // Closes the state early, rather than waiting for the destructor.
   //
   // Anything still holding a registry reference -- a Function a plugin
-  // registered, a Table the host read a config out of -- keeps working as an
-  // object afterwards and says so when used, instead of touching a lua_State
-  // that is gone. See state.hpp for how.
+  // registered, a Table the host read a config out of -- remains a valid
+  // object afterwards and reports the closure when used, rather than touching
+  // a lua_State that is gone. See state.hpp for how.
   auto close() noexcept -> void {
     if (!L_) return;
     if (handle_) handle_->open = false;  // must precede lua_close
@@ -255,10 +255,8 @@ class Interpreter {
   //   lua.eval<Table>(settings_source)          // a config file's table
   //   lua.eval<std::tuple<int, int>>("...")     // two results, as a call
   //
-  // script() is this with R = void, and stays, because discarding the result
-  // is the common case. But a config file whose last line is `return { ... }`
-  // is the other common case, and reading it used to mean hand-written stack
-  // code around load_script_as_module.
+  // script() is this with R = void, which is the common case; a config file
+  // whose last line is `return { ... }` is the other one.
   template <typename R = void>
   auto eval(std::string_view code, const char *chunkname = "=eval") -> R {
     return finish<R>(core::aux::loadbuffer(L_, code.data(), code.size(), chunkname));
@@ -302,9 +300,10 @@ class Interpreter {
       if (g.has(name)) env.set(name, g.get<Ref>(name));
     }
 
-    // Chunks reach their own environment through _G, and load() inside the
-    // sandbox needs it to exist, so it points at the sandbox rather than at
-    // the real globals -- which would hand back everything just withheld.
+    // Scripts expect _G to exist and to be their own environment. Pointing it
+    // at the sandbox keeps that true; leaving it out of the table entirely
+    // would break ordinary code, and pointing it at the real globals would
+    // hand back everything just withheld.
     env.push(L_);
     env.set("_G", Ref::pop(L_));
     return env;
@@ -329,8 +328,8 @@ class Interpreter {
 
   // ------------------------------------------------------------- plumbing
 
-  // Where require looks for .lua files. A host loading mods out of a directory
-  // needs this, and had to reach past the facade into the package table.
+  // Where require looks for .lua files, which is what a host loading mods out
+  // of its own directory sets.
   auto package_path(std::string_view pattern) -> Interpreter & { return set_package_field("path", pattern); }
   auto package_cpath(std::string_view pattern) -> Interpreter & { return set_package_field("cpath", pattern); }
 

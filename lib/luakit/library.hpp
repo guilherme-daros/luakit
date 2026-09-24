@@ -63,9 +63,9 @@ class Library {
     return *this;
   }
 
-  // A function that suspends the coroutine calling it. The same binding
-  // raw_fn(name, luakit::yielding<F>) produces, except that the signature is
-  // still visible, so it reaches the generated definitions like anything else.
+  // A function that suspends the coroutine calling it: the binding
+  // raw_fn(name, luakit::yielding<F>) produces, with the signature still
+  // visible, so it reaches the generated definitions like anything else.
   template <auto F>
   auto yielding_fn(const char *name) -> Library & {
     funcs_.push_back({name, luakit::yielding<F>});

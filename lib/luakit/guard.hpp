@@ -7,9 +7,10 @@
 
 namespace luakit {
 
-// Every diagnostic the library raises starts "luakit: ", so that a script
-// author can tell at a glance whether a message came from the binding layer or
-// from Lua. This one says which kind it was as well.
+// Marks an error as having come from a C++ exception rather than from Lua or
+// from a bad argument. Argument errors are phrased the way Lua phrases its own
+// -- "bad argument #1 to 'scale' (element 2 is not a number)" -- and are left
+// unprefixed for that reason; this one has no Lua equivalent to imitate.
 static constexpr const char *k_guard_prefix = "luakit: C++ exception: ";
 
 // A C++ exception unwinding through Lua's C frames is undefined behaviour, so

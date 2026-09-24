@@ -73,9 +73,8 @@ class Coroutine {
   //   R = tuple<A, B>   ->  optional<tuple<A, B>>, from a two-value yield
   //
   // A tuple means several yielded values, exactly as it means several results
-  // in Function::call. It used to mean one yielded *table* here, which was the
-  // same spelling for the opposite thing, and left a multi-value yield with no
-  // spelling at all short of reading raw() by hand.
+  // in Function::call. A single yielded *table* is read as the container type
+  // it holds -- std::vector, std::map, luakit::Table.
   //
   // An error inside the coroutine throws Error, which also marks it finished.
   template <typename R = void, typename... Args>

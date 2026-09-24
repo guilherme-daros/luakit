@@ -15,7 +15,7 @@
 // Most-derived-type resolution needs typeid and dynamic_cast. Plenty of game
 // builds turn RTTI off, so it is detected rather than assumed: without it
 // everything below still works, and pushing a base pointer simply produces a
-// base-typed userdata, which is what it did before the feature existed.
+// base-typed userdata.
 #if defined(__cpp_rtti) || defined(__GXX_RTTI) || defined(_CPPRTTI)
 #define LUAKIT_HAS_RTTI 1
 #else
@@ -224,18 +224,18 @@ auto upcast(void *p) noexcept -> void * {
 // Passing a Derived where a Base is expected is handled by the cast table
 // above. Handing one *out* is the other direction, and the harder one: an
 // engine API is mostly base pointers -- Entity *find(), Entity *parent(),
-// std::vector<Entity *> children() -- so without this, pushing a Base * for an
-// object that is really a Creature produced a Base-typed userdata with its own
-// entry in a *different* identity cache. The same C++ object then reached Lua
-// as two unrelated values: `a == b` was false, the derived members were
-// missing, and a field a mod stashed through one handle was invisible through
-// the other.
+// std::vector<Entity *> children().
 //
-// So register_class records, per registered polymorphic type, a thunk that
-// pushes an object as that type, keyed by its typeid name. push_ref consults
-// it with typeid(*p) and delegates, and the object ends up with exactly one
-// userdata, of its most derived *registered* type. A derived type nobody
-// registered simply misses, and the static type is used, as before.
+// Each registered polymorphic type records a thunk that pushes an object as
+// that type, keyed by its typeid name. push_ref consults it with typeid(*p)
+// and delegates, so an object ends up with exactly one userdata, of its most
+// derived *registered* type. Without this, pushing a Base * for something that
+// is really a Creature would give it a second, Base-typed userdata in a
+// separate identity cache: `a == b` false, the derived members missing, and a
+// field a mod stashed through one handle invisible through the other.
+//
+// A derived type nobody registered simply misses, and the static type is
+// used.
 
 // Pushes `most_derived` -- a void * from dynamic_cast, so the address of the
 // complete object -- as D.

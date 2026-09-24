@@ -581,10 +581,9 @@ struct Stack<T &> {
 // The const spellings of the two above.
 //
 // Lua has no const, so it is erased at the boundary: a script handed a
-// `const Entity *` can call any bound mutator on it. That is worth knowing,
-// and it is still much better than the alternative, which was that
-// `const Entity *find() const` simply would not compile -- quietly pushing a
-// host towards dropping const from its own API to satisfy the binding layer.
+// `const Entity *` can call any bound mutator on it. Worth knowing, and the
+// price of being able to bind `const Entity *find() const` at all rather than
+// dropping const from the host's own API to satisfy the binding layer.
 //
 // Written out rather than folded into Stack<T *> because the constraint there
 // is `Registered T`, and Registered<const Entity> is false: nobody specializes
@@ -682,9 +681,9 @@ struct Stack<std::shared_ptr<T>> {
 };
 
 // A unique_ptr hands the object over for good: the host built it, is done with
-// it, and the collector destroys it. This is the transfer case, and it is the
-// one returning T by value cannot express -- an Entity is typically neither
-// copyable nor movable, and it is already allocated somewhere else.
+// it, and the collector destroys it. This is the transfer case, which
+// returning T by value cannot express -- an Entity is typically neither
+// copyable nor movable, and is already allocated somewhere else.
 //
 // Push only. Taking a unique_ptr *out* of Lua would mean tearing an object out
 // of a box that scripts may still hold handles to, which has no safe answer;
@@ -714,8 +713,8 @@ struct Stack<std::unique_ptr<T>> {
 // Any Lua value at all, anchored so it keeps working after the call.
 //
 // Table and Function each have one of these; this is the same idea without the
-// type requirement, which is what a handler taking whatever a mod felt like
-// passing needs: `on_event(std::string name, luakit::Ref payload)`.
+// type requirement, for a handler taking whatever a mod felt like passing:
+// `on_event(std::string name, luakit::Ref payload)`.
 template <>
 struct Stack<Ref> {
   static constexpr const char *name = "any";
@@ -751,9 +750,8 @@ namespace detail {
 // share one specialization.
 //
 // The cv-qualifier is kept on a registered reference, so `const Vec2 &` maps
-// to Stack<const Vec2 &> rather than Stack<Vec2 &>. Without that, a getter
-// returning `const Vec2 &` -- an entirely ordinary thing to write -- failed to
-// compile, because the push took a non-const Vec2 &.
+// to Stack<const Vec2 &> rather than Stack<Vec2 &>, which is what lets a
+// getter return `const Vec2 &`.
 template <typename T>
 using stack_key_t =
     std::conditional_t<std::is_lvalue_reference_v<T> && Registered<std::remove_cv_t<std::remove_reference_t<T>>>,
@@ -785,11 +783,8 @@ struct is_tuple<std::tuple<Ts...>> : std::true_type {};
 // spelling available.
 //
 // These three say so once, and Function::call, Coroutine::resume and
-// Interpreter::eval all share them -- which is the point. They used to live in
-// callback.hpp, where only Function could reach them, and Coroutine::resume
-// went through Stack<R> instead: resume<std::tuple<int, int>> therefore meant
-// "one yielded table" while call<std::tuple<int, int>> meant "two results".
-// One type, one spelling, two opposite meanings.
+// Interpreter::eval all share them, so one spelling means one thing wherever
+// a call's results are read.
 
 // How many Lua values a C++ result type asks for.
 template <typename R>

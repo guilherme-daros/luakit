@@ -9,9 +9,9 @@
 // the exact-metatable check and goes through the cast table. Depth is free;
 // inheritance is not quite.
 //
-// And pushing a base pointer now does a typeid comparison and possibly a
-// dynamic_cast before the identity cache, which should stay small next to the
-// Lua call around it.
+// And pushing a base pointer costs a typeid comparison, and possibly a
+// dynamic_cast, before the identity cache; both should stay small next to the
+// Lua call around them.
 //
 //   cmake -S . -B build -DLUNA_BUILD_BENCH=ON -DCMAKE_BUILD_TYPE=Release
 //   cmake --build build --target bench && ./build/bench/bench

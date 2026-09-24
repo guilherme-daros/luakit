@@ -1,6 +1,6 @@
-// The type shapes an engine API produces that the binding could not take
-// before: const pointers and references, unique_ptr transfer, any-value Refs,
-// sets, and a T & return that is not the receiver.
+// The type shapes an engine API produces: const pointers and references,
+// unique_ptr transfer, any-value Refs, sets, and a T & return that is not the
+// receiver.
 
 #include "check.hpp"
 
@@ -30,8 +30,8 @@ struct Widget {
   auto operator=(const Widget &) -> Widget & = delete;
 };
 
-// A container whose children are Widgets it owns: `child()` returns a T & that
-// is not the receiver, which used to be refused outright.
+// A container whose children are Widgets it owns, so `child()` returns a T &
+// that is not the receiver.
 struct Rack {
   std::vector<std::unique_ptr<Widget>> parts;
 

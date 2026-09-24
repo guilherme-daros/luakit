@@ -109,7 +109,7 @@ auto free_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) ->
 
   // The return type is written out rather than deduced: `auto` would decay a
   // `T &` return to `T` and silently ask for a copy, which for a class Lua
-  // holds by address is both wrong and often not even possible.
+  // holds by address is both wrong and often not possible.
   return invoke_and_push<R>(L, [&]() -> R { return F(forward_arg<A>(std::get<I>(args))...); });
 }
 
@@ -147,14 +147,13 @@ auto method_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) 
   // is already on the stack: hand that back rather than re-wrapping it.
   //
   // It is not always chaining, though. `Node &Node::child(int)` returns a
-  // different object of the same class, and that is an ordinary thing for an
-  // engine API to do, so it is lent the normal way instead of being refused.
-  // The identity cache means a script that has seen the object before gets the
+  // different object of the same class, which is lent the ordinary way. The
+  // identity cache means a script that has seen that object before gets the
   // same userdata back, with whatever it stashed on it.
   if constexpr (std::is_lvalue_reference_v<R> && std::is_same_v<std::remove_cv_t<std::remove_reference_t<R>>, C>) {
     // auto, because R may be `const C &`: a getter handing back a reference to
     // a member is the same shape. const is erased on the way into Lua either
-    // way -- see the Stack<const T &> comment for why.
+    // way -- see the Stack<const T &> comment.
     auto *returned = &(self->*M)(forward_arg<A>(std::get<I>(args))...);
     if (returned == self) {
       core::settop(L, 1);
@@ -164,7 +163,7 @@ auto method_call(core::State *L, std::tuple<A...> *, std::index_sequence<I...>) 
     return 1;
   } else {
     // Spelled out for the same reason as in free_call: a deduced `auto` would
-    // decay a `T &` return -- `Node &Node::child(int)` -- into a copy.
+    // decay a `T &` return into a copy.
     return invoke_and_push<R>(L, [&]() -> R { return (self->*M)(forward_arg<A>(std::get<I>(args))...); });
   }
 }

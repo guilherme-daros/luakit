@@ -22,12 +22,12 @@ namespace luakit {
 //
 // A Ref made from an Interpreter's state survives that Interpreter being
 // closed: it takes a share of the control block (see state.hpp), and once that
-// says closed there is no registry left to give a key back to, so releasing
-// becomes a no-op instead of a use-after-free. Releasing early is still
-// tidier, and still what a host should do, but forgetting is no longer fatal.
+// says closed there is no registry left to give a key back to, so releasing is
+// a no-op rather than a use-after-free. Releasing early is still tidier, and
+// still what a host should do.
 //
 // A Ref made from a lua_State luakit did not create has no block to consult,
-// and the older contract applies to it: that state must outlive the Ref.
+// and the stricter contract applies to it: that state must outlive the Ref.
 class Ref {
  public:
   Ref() = default;

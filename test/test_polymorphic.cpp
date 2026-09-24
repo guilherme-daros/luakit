@@ -1,9 +1,9 @@
 // Handing a base pointer out for an object that is really derived.
 //
 // Passing a Derived into a Base parameter is test_class.cpp's job. This is the
-// other direction, which used to produce two unrelated Lua objects for one C++
-// object: `==` false, the derived members missing, and per-instance state
-// invisible from whichever handle did not set it.
+// other direction: one C++ object must reach Lua as one value however the
+// pointer was spelled, or `==` fails, the derived members go missing, and
+// per-instance state is invisible from whichever handle did not set it.
 
 #include "check.hpp"
 
@@ -105,8 +105,7 @@ auto main() -> int {
   CHECK_STR(lua.eval<std::string>("return z.as_dog().tag"), "set through the base");
 #else
   // Resolution needs typeid and dynamic_cast. Without RTTI a base pointer
-  // stays a base pointer, which is what it did before the feature existed --
-  // and is still correct, just less useful.
+  // stays a base pointer: still correct, just less useful.
   t::section("without RTTI, a base pointer stays the static type");
   CHECK_EQ(lua.eval<bool>("return z.as_animal() ~= z.as_dog()"), true);
   CHECK_EQ(lua.eval<bool>("return z.as_animal().legs == nil"), true);

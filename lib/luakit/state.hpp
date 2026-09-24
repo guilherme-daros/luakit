@@ -24,8 +24,7 @@ namespace luakit {
 // appending to a table in a loop takes the process down with an allocation
 // failure the host never gets to see.
 //
-// Zero means unlimited, which is the default and matches what an interpreter
-// did before these existed.
+// Zero means unlimited, and is the default for both.
 struct Limits {
   // Bytes of Lua-allocated memory. Enforced by the allocator, so exceeding it
   // surfaces as an ordinary Lua error ("not enough memory") that the host
@@ -42,14 +41,11 @@ struct Limits {
 //
 // That is the point of it. A Ref releases its registry key in its destructor,
 // which touches the lua_State; hold one past lua_close -- a namespace-scope
-// container of plugin callbacks, destroyed after main returns -- and that is a
-// use-after-free with nothing to detect it. Every class here that anchors a
-// value used to document the hazard and leave the host to avoid it.
-//
-// Now the Interpreter marks the block closed *before* lua_close, and a Ref
-// whose block is closed drops its key rather than giving it back. Releasing
-// early is still tidier, and still what a host should do, but forgetting is no
-// longer a way to corrupt memory.
+// container of plugin callbacks, destroyed after main returns -- and that
+// would be a use-after-free with nothing to detect it. The Interpreter marks
+// the block closed *before* lua_close, and a Ref whose block is closed drops
+// its key rather than giving it back. Releasing early is still tidier, and
+// still what a host should do, but forgetting it cannot corrupt memory.
 //
 // It is also where the sandbox counters live: the allocator and the
 // instruction hook each need somewhere per-state to keep a number, and this is
@@ -78,8 +74,8 @@ inline auto handle_key() noexcept -> const void * {
 // luaL_newstate in a test, or a host mixing luakit with hand-written C API
 // code -- and everything that consults it falls back to the older behaviour,
 // where the caller is responsible for ordering. Deliberately *not* read out of
-// lua_getextraspace: Lua does not zero that, so a foreign state would hand
-// back garbage and there would be no way to tell.
+// lua_getextraspace: Lua does not initialise that, so a foreign state hands
+// back whatever was in the allocation and there is no way to tell.
 inline auto handle_ptr(core::State *L) noexcept -> StateHandle * {
   if (core::rawgetp(L, core::REGISTRYINDEX, handle_key()) != core::TLIGHTUSERDATA) {
     core::pop(L, 1);
@@ -166,9 +162,9 @@ inline auto instruction_hook(core::State *L, core::Debug *) -> void {
   core::aux::error(L, "luakit: instruction budget exhausted");
 }
 
-// Re-arms the budget for one host-initiated call, and installs the hook the
-// first time. Cheap enough to sit at the top of every call into Lua, and a
-// no-op when no limit was asked for.
+// Refills the budget and sets the hook, for one host-initiated call. Cheap
+// enough to sit at the top of every call into Lua, and a no-op when no limit
+// was asked for.
 //
 // Per call rather than per interpreter on purpose: a tick handler that is
 // merely slow should keep working every frame, and only one that never returns
