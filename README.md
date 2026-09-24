@@ -425,5 +425,24 @@ Other targets:
 | `format`, `format-check` | clang-format and stylua |
 | `luakit_self_contained` | compiles each header alone, to keep it that way |
 
-`-DLUNA_BUILD_BENCH=ON` adds `bench`, which measures call overhead, field
-access and the inheritance paths in `bench/bench.cpp`.
+```sh
+cmake -S . -B build -DLUNA_BUILD_BENCH=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target bench
+./build/bench/bench --benchmark_repetitions=5 --benchmark_report_aggregates_only=true
+```
+
+`bench/bench.cpp` measures the paths a host runs every frame -- call and field
+overhead, the inheritance cost the flattened-members claim above depends on,
+identity resolution, container marshalling -- on
+[google/benchmark](https://github.com/google/benchmark), fetched over the
+network the first time this configures. Nothing else in the tree needs it,
+which is why it stays behind its own flag.
+
+It also runs the same computation four ways, to answer the question a host
+actually has when structuring a frame: does this loop belong in C++ or in Lua.
+`Sequence_PureCpp` is the floor with no Lua at all; `Sequence_CppDrivesLuaPerItem`
+pays a full round trip per element, the shape of calling a script hook once per
+entity; `Sequence_LuaDrivesLoop` pays one round trip and loops inside Lua,
+still touching real bound objects each time, which is the shape a scripted
+frame actually has; `Sequence_LuaOnly` never reaches into C++ at all. Filter to
+just that group with `--benchmark_filter=Sequence`.

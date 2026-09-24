@@ -88,7 +88,10 @@ if(LUNA_BUILD_DEMO)
     VERBATIM)
 endif()
 
-option(LUNA_BUILD_BENCH "Build the microbenchmarks" OFF)
+# Off by default: bench/ fetches google/benchmark from the network on first
+# configure, which is not something a plain build of the library or the demo
+# should ever need to do.
+option(LUNA_BUILD_BENCH "Build the microbenchmarks (fetches google/benchmark)" OFF)
 if(LUNA_BUILD_DEMO AND LUNA_BUILD_BENCH)
   add_subdirectory(bench)
 endif()
@@ -128,6 +131,7 @@ file(GLOB_RECURSE LUNA_FORMAT_CXX CONFIGURE_DEPENDS
      "${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/test/*.cpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/test/*.hpp"
+     "${CMAKE_CURRENT_SOURCE_DIR}/bench/*.cpp"
      "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/*.hpp")
 list(REMOVE_ITEM LUNA_FORMAT_CXX
      "${CMAKE_CURRENT_SOURCE_DIR}/lib/luakit/core/api_gen.hpp")

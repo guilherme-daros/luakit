@@ -111,3 +111,17 @@ jobs:
           unzip -q stylua.zip && sudo mv stylua /usr/local/bin/
       - run: cmake -S . -B build
       - run: cmake --build build --target format-check
+
+  # Not a performance gate -- shared runners are too noisy for that -- just
+  # proof that bench/ still builds and runs against whatever the library looks
+  # like now. LUNA_BUILD_BENCH fetches google/benchmark, so this is the one
+  # job that needs the network beyond apt/curl.
+  bench:
+    name: benchmarks build and run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y liblua5.4-dev lua5.4 xxd
+      - run: cmake -S . -B build -DLUNA_BUILD_BENCH=ON -DLUNA_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build --target bench -j
+      - run: ./build/bench/bench --benchmark_min_time=0.01s
