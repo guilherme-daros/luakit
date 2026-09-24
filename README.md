@@ -61,6 +61,9 @@ Each header stands on its own, so you include what you name:
 | `stack.hpp` | `Stack<T>`, the conversion contract |
 | `ref.hpp` | `Ref`, a registry anchor for any Lua value |
 | `guard.hpp` | `guard`, the exception boundary |
+| `state.hpp` | `Limits`, and the control block handles consult |
+| `doc.hpp` | `emit_module`, the LuaLS definition generator |
+| `version.hpp` | `LUAKIT_VERSION` and friends |
 | `core/api.hpp` | the whole Lua C API, namespaced |
 
 ## Using it
@@ -74,8 +77,19 @@ target_link_libraries(my_game PRIVATE luakit::luakit)
 luakit::Interpreter lua;
 lua.openlibs()
    .preload({"world", luaopen_world})   // available to require, not yet run
+   .add_package_path("mods/?.lua")      // where require looks
    .script_file("mods/init.lua");
 ```
+
+`script` runs a chunk; `eval<T>` runs one and reads back what it returns, which
+is what a settings file ending in `return { ... }` wants:
+
+```cpp
+auto settings = lua.eval<luakit::Table>(source);
+```
+
+`lua.on_print(sink)` routes everything scripts print into the host's own
+console instead of stdout.
 
 `Interpreter` owns the `lua_State` and closes it. Failures -- a chunk that will
 not load, an error at runtime -- arrive as `luakit::Error`, with a traceback
@@ -142,7 +156,8 @@ template <> struct luakit::Metatable<Dog> {
 ```
 
 A `Dog` then satisfies a parameter of type `Animal *` or `Animal &`, with the
-pointer adjusted properly for a base at a non-zero offset. Methods, fields and
+pointer adjusted properly for a base at a non-zero offset, and a function
+*returning* `Animal *` hands back a `Dog` when that is what the object is. Methods, fields and
 metamethods are all copied down at registration, so a base's `__tostring` is
 what a derived class prints with, and a lookup costs the same however deep the
 hierarchy is. A name the derived class defines itself wins.
@@ -192,12 +207,21 @@ for (const auto &h : handlers) h.call<void>(dt);
 Calls are protected: an error inside a plugin arrives as a `luakit::Error` with
 a traceback, not as a crashed host.
 
-One rule comes with it. A `Function` holds a reference into the registry and
-gives it back when it is destroyed, so it must not outlive the `Interpreter`.
-A handler container that is a namespace-scope static gets destroyed after
-`main` returns, which is after `lua_close` -- release them first.
-`src/packages/world/world.cpp` does this in `world::shutdown`, driven by a guard in
-`main` so an early return cannot skip it.
+A `Function` holds a reference into the registry and gives it back when it is
+destroyed. Outliving the `Interpreter` used to be a use-after-free waiting for
+a plugin manager held in a namespace-scope static, destroyed after `main`
+returns and therefore after `lua_close`. It no longer is: handles share a
+control block with the interpreter, notice that it has closed, and say so
+rather than touching a freed `lua_State`.
+
+```cpp
+lua.close();
+handler.call<void>(dt);   // throws: interpreter has been closed
+```
+
+Releasing them first is still tidier, and `src/packages/world/world.cpp` still
+does it in `world::shutdown`. Forgetting is now a clear error instead of
+undefined behaviour.
 
 `luakit::Table` does the same for tables, which is usually how a plugin's
 configuration arrives:
@@ -218,11 +242,16 @@ it per object rather than per class:
 | owned | `ctor`, or returning `T` by value | Lua's collector | objects a script makes for itself |
 | borrowed | returning `T *`, or `push_ref` | nobody | the engine's own entities, lent out |
 | shared | returning `std::shared_ptr<T>` | the last reference | objects neither side should have to outlive |
+| unique | returning `std::unique_ptr<T>` | Lua's collector | handing an object over for good |
 
 All three share one metatable, so a method works the same whichever it has.
 
 Pushing the same pointer twice gives the same Lua object, so `a == b` holds and
-a field a script set on it is still there next time. If the host has to destroy
+a field a script set on it is still there next time. That holds however the
+pointer was spelled: a `Creature` handed out as an `Entity *` arrives as the
+same Lua object the `Creature *` did, with the derived methods and fields
+present. (That needs RTTI, which is detected; without it a base pointer stays
+the base type.) If the host has to destroy
 something a script can still reach, `Userdata<T>::invalidate` severs it: the
 next use says `used after finalization` instead of reading freed memory.
 
@@ -242,10 +271,17 @@ Whatever the host passes to the next resume becomes the call's result.
 ## Hot reload
 
 `lua.reload("plugin")` drops a module and requires it again, so a script can be
-edited without restarting. It does not retrofit the new code onto anything the
-old version left behind -- captured tables, registered callbacks, objects built
-from the previous metatable all keep the old behaviour -- so it works best for
-plugins whose state lives in the module table.
+edited without restarting.
+
+What it does not retrofit is anything the old version *captured*: a table a
+script already took a reference to, a callback the host is still holding. Those
+keep the old behaviour, so reload works best for plugins whose state lives in
+the module table.
+
+Registered classes are the exception, and in the useful direction. Re-running a
+`Class<T>` registration updates the metatable in place, so objects that already
+exist pick up the new methods and fields -- an entity a mod spawned before the
+reload responds to the code written after it.
 
 ## Embedding scripts
 
@@ -258,6 +294,89 @@ luakit_embed_script(TARGET my_game SCRIPT lua/init.lua NAME init_lua MODE byteco
 
 It defines `init_lua[]`, `init_lua_len` and the macro `LUAKIT_EMBEDDED_INIT_LUA`,
 for `Interpreter::script_bytecode`.
+
+`luakit_embed_dir` does the same for a whole directory, behind one lookup
+instead of a macro per script -- which is what `src/` actually uses:
+
+```cmake
+luakit_embed_dir(TARGET my_game SOURCE_DIR lua NAMESPACE file MODE bytecode
+                 STUB_DIR src/lsp_stub)
+```
+
+```cpp
+lua.load(luakit::file::script("lua/init.lua"));
+```
+
+`MODE file` reads from disk at runtime instead, so a Debug build can edit
+scripts without rebuilding, and the call site above does not change. `STUB_DIR`
+holds a committed placeholder so an editor can resolve `luakit::file::script`
+before the project has been configured once.
+
+## Running code you did not write
+
+Which libraries are open says what a plugin may reach for. `Limits` says how
+much it may use, which is the other half: without it a mod with `while true do
+end` hangs the host, and one that appends to a table in a loop takes the
+process down on an allocation failure nobody gets to see.
+
+```cpp
+luakit::Interpreter lua({
+    .memory = 64 << 20,        // enforced in the allocator
+    .instructions = 5'000'000, // per call into Lua, re-armed each time
+});
+```
+
+Both arrive as an ordinary `luakit::Error`, so one bad plugin is something the
+host reports rather than something it dies of. The instruction budget is per
+host-initiated call -- one `script`, one `Function::call`, one
+`Coroutine::resume` -- so a handler that is merely slow keeps working every
+frame and only one that never returns is stopped. It reaches coroutines a
+script creates for itself.
+
+The third lever is what a chunk can see:
+
+```cpp
+auto env = lua.make_env({"assert", "pairs", "ipairs", "string", "math"});
+lua.script_in(env, source, "=mods/thing.lua");
+```
+
+`make_env` returns an ordinary `Table`, so anything finer is `env.set(...)`.
+`_G` inside points at the sandbox, not at the real globals.
+
+`lua.memory_used()` reports what the interpreter currently holds, and
+`lua.gc()` drives collection on the host's schedule rather than Lua's --
+`collect()`, `step(kb)`, `generational(...)`, `incremental(...)`.
+
+## Definitions for the people writing the mods
+
+A mod author writing against a C++ host normally gets no help from their
+editor: the API exists only as template instantiations. But the registration
+already knows every name, every signature, every base class, and -- through
+`EnumNames` -- the exact strings an enum accepts.
+
+```sh
+./build/src/main --emit-defs lua/defs
+```
+
+```lua
+---@class world.Creature : world.Entity
+---@field hp integer
+---@field facing "north"|"south"|"east"|"west"
+---@field alive boolean  # read-only
+local Creature = {}
+
+---@param a1 integer
+---@return world.Creature
+function Creature:damage(a1) end
+```
+
+So `goblin.facing = "nrth"` is an error in the editor rather than at the call,
+and `world.spawn(` completes with the type it returns. `cmake --build build
+--target defs` regenerates them; CI fails if they drift from the C++.
+
+Pass the module name to the builder for this to be accurate:
+`luakit::Class<Entity>(L, "world")`, `luakit::Library(L, "world")`. Without one
+the registration still works and simply goes undocumented.
 
 ## How it stays safe
 
@@ -290,6 +409,21 @@ cmake --build build --target run      # the demo host
 Tests build with AddressSanitizer and UBSan by default: several of them assert
 "nothing leaked" or "nothing was freed twice", which only a sanitizer can see.
 
-`cmake --build build --target api` regenerates `lib/luakit/core/api_gen.hpp`,
-which is only needed when the Lua version changes. `format` and `format-check`
-run clang-format and stylua.
+Some of what the library promises cannot be observed at run time: that a
+borrowed view may not escape its call, that a `Variadic` comes last, that an
+unregistered class is named as such. Those are `static_assert`s, and
+`compile_fail_*` tests check both that each one refuses and that it refuses
+with the sentence it was written to say.
+
+Other targets:
+
+| Target | What it does |
+| --- | --- |
+| `run` | the demo host |
+| `defs` | regenerates `lua/defs/` from the C++ registration |
+| `api` | regenerates `core/api_gen.hpp`; only when Lua changes |
+| `format`, `format-check` | clang-format and stylua |
+| `luakit_self_contained` | compiles each header alone, to keep it that way |
+
+`-DLUNA_BUILD_BENCH=ON` adds `bench`, which measures call overhead, field
+access and the inheritance paths in `bench/bench.cpp`.
