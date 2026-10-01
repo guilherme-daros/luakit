@@ -31,6 +31,16 @@ auto args_match(core::State *L, int first, std::index_sequence<I...>) noexcept -
   return (Stack<stack_key_t<A>>::test(L, first + static_cast<int>(I)) && ...);
 }
 
+template <typename T>
+inline auto push_arg_name(core::State *L, int &pieces) -> void {
+  if (pieces > 1) {
+    core::pushliteral(L, ", ");
+    ++pieces;
+  }
+  core::pushstring(L, Stack<stack_key_t<T>>::name);
+  ++pieces;
+}
+
 // Renders a signature as "(number, string)" for a diagnostic, built on the Lua
 // stack so that nothing with a destructor is alive when the error longjmps.
 //
@@ -39,18 +49,7 @@ template <typename... A>
 auto describe_args(core::State *L) -> void {
   core::pushliteral(L, "(");
   int pieces = 1;
-
-  (
-      [&] {
-        if (pieces > 1) {
-          core::pushliteral(L, ", ");
-          ++pieces;
-        }
-        core::pushstring(L, Stack<stack_key_t<A>>::name);
-        ++pieces;
-      }(),
-      ...);
-
+  (push_arg_name<A>(L, pieces), ...);
   core::pushliteral(L, ")");
   core::concat(L, pieces + 1);
 }
@@ -110,6 +109,15 @@ constexpr auto ctor_arm_for(Args<A...> *) -> Arm {
   return ctor_arm<T, A...>();
 }
 
+inline auto describe_one_arm(core::State *L, const Arm &arm, int &pieces) -> void {
+  if (pieces > 1) {
+    core::pushliteral(L, ", ");
+    ++pieces;
+  }
+  arm.describe(L);
+  ++pieces;
+}
+
 // Tries each arm in declaration order and runs the first that fits. Order
 // matters and is the author's to choose: a later arm taking std::optional or
 // a broader type would otherwise swallow calls meant for an earlier one.
@@ -126,16 +134,7 @@ auto overload_impl(core::State *L) -> int {
   core::pushfstring(L, "luakit: no overload matches the %d argument(s) given. Candidates: ", given);
 
   int pieces = 1;
-  (
-      [&] {
-        if (pieces > 1) {
-          core::pushliteral(L, ", ");
-          ++pieces;
-        }
-        Arms.describe(L);
-        ++pieces;
-      }(),
-      ...);
+  (describe_one_arm(L, Arms, pieces), ...);
 
   core::concat(L, pieces);
   return core::error(L);
