@@ -105,6 +105,12 @@ auto point_at(int i) -> Point * {
   return &g_points[static_cast<std::size_t>(i)];
 }
 
+auto step_all_points(int n, double dx, double dy) -> void {
+  for (int i = 0; i < n; ++i) {
+    g_points[static_cast<std::size_t>(i)].step(dx, dy);
+  }
+}
+
 auto vector_of(int n) -> std::vector<double> {
   return std::vector<double>(static_cast<std::size_t>(n), 1.5);
 }
@@ -170,6 +176,7 @@ auto open_bench(luakit::core::State *L) -> int {
       .fn<add>("add")
       .fn<echo>("echo")
       .fn<point_at>("point_at")
+      .fn<step_all_points>("step_all_points")
       .fn<vector_of>("vector_of")
       .fn<map_of>("map_of")
       .overload<pick_one, pick_two, pick_three, pick_four>("pick_1_of_4")
@@ -425,6 +432,14 @@ void Sequence_LuaOnly(benchmark::State &state) {
   state.SetItemsProcessed(state.iterations() * n);
 }
 BENCHMARK(Sequence_LuaOnly)->Arg(10)->Arg(100)->Arg(1000)->Arg(10000);
+
+void Sequence_LuaCallsCppBatch(benchmark::State &state) {
+  const auto n = static_cast<int>(state.range(0));
+  auto fn = closure("local count = ... b.step_all_points(count, 1.0, 1.0)");
+  for (auto _ : state) fn.call<void>(n);
+  state.SetItemsProcessed(state.iterations() * n);
+}
+BENCHMARK(Sequence_LuaCallsCppBatch)->Arg(10)->Arg(100)->Arg(1000)->Arg(10000);
 
 // ============================================================= sandbox
 //
